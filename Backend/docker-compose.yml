@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: shodh
+      POSTGRES_PASSWORD: shodh
+      POSTGRES_DB: shodh
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shodh -d shodh"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  judge-image:
+    image: shodh-judge:v1
+    build:
+      context: ./docker/judge
+      dockerfile: Dockerfile
+    command: ["true"]
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://shodh:shodh@postgres:5432/shodh
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1d}
+      PORT: 3000
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      JUDGE_IMAGE: shodh-judge:v1
+      JUDGE_TIMEOUT_MS: ${JUDGE_TIMEOUT_MS:-60000}
+      MAX_SOURCE_CODE_BYTES: ${MAX_SOURCE_CODE_BYTES:-102400}
+      JUDGE_VERSION: judge-v1
+    volumes:
+      # Required so this API process can start sibling judge containers.
+      # The socket grants the backend engine-level Docker access. See README.
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      judge-image:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
