@@ -17,7 +17,7 @@ export type Evidence = { id: string; kind: string; title: string; text: string; 
 export type Claim = { text: string; kind: 'observation' | 'hypothesis'; evidence: string[] };
 export type AiAnswer = {
   answer: string; claims: Claim[]; confidence: string; missing: string[]; needs_clarification: boolean; evidence: Evidence[];
-  source: 'llm' | 'fallback' | 'policy'; degraded?: string; refusal?: string; requestId: string; mode: string; policy: string; timingMs: number;
+  source: 'llm' | 'fallback' | 'policy'; model?: string; retrieval?: string; degraded?: string; refusal?: string; requestId: string; mode: string; policy: string; timingMs: number;
 };
 
 const TOKEN_KEY = 'shodh.token';

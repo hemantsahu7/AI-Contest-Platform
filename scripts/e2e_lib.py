@@ -27,7 +27,11 @@ def call(method, url, token=None, body=None):
         with urllib.request.urlopen(req, timeout=60) as r:
             return r.status, json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
-        return e.code, json.loads(e.read() or b"{}")
+        raw = e.read() or b"{}"
+        try:
+            return e.code, json.loads(raw)
+        except ValueError:
+            return e.code, {"raw": raw[:200].decode("utf-8", "replace")}
 
 
 def check(name, cond, detail=""):
@@ -35,6 +39,23 @@ def check(name, cond, detail=""):
     print(("PASS " if cond else "FAIL ") + name + (f"  [{detail}]" if detail and not cond else ""))
     passed += bool(cond)
     failed += not cond
+
+
+def wait_ready(timeout=90):
+    """The stack may still be starting (backend runs migrations + seed): wait for both services."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(API + "/health", timeout=3) as r, urllib.request.urlopen(AI + "/health", timeout=3) as r2:
+                if r.status == 200 and r2.status == 200:
+                    return
+        except Exception:
+            pass
+        time.sleep(1)
+    raise SystemExit("Stack not ready: is `docker compose up` running?")
+
+
+wait_ready()
 
 
 def login(email):

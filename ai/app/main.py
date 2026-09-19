@@ -8,7 +8,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from . import assistant
+from . import assistant, gemini
 from .backend import Backend, NotAccessible, Unauthorized
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -40,12 +40,12 @@ def _check_rate(user_id: str) -> None:
 
 @app.get("/ai/health")
 def health():
-    return {"status": "ok", "model_configured": bool(assistant.API_KEY), "model": assistant.MODEL if assistant.API_KEY else None}
+    return {"status": "ok", "provider": "gemini", "model_configured": gemini.configured(), "model": gemini.MODEL if gemini.configured() else None}
 
 
 @app.get("/ai/usage")
 def usage():
-    return {**assistant.USAGE, "rate_limit_per_user_per_hour": RATE_LIMIT, "timeout_s": assistant.TIMEOUT_S}
+    return {**assistant.USAGE, "rate_limit_per_user_per_hour": RATE_LIMIT, "timeout_s": gemini.TIMEOUT_S}
 
 
 @app.post("/ai/ask")
@@ -57,9 +57,10 @@ async def ask(req: AskRequest, authorization: str | None = Header(default=None))
     be = Backend(authorization.split(" ", 1)[1])
     try:
         me = await be.get("/auth/me")
-        _check_rate(me["id"])
         t_gather = time.perf_counter()
         ctx = await assistant.gather(req.question, req.contestId, req.problemId, req.submissionId, be, me)
+        if not ctx.refusal:  # policy refusals cost no model call, so they are not rate limited
+            _check_rate(me["id"])
         t_answer = time.perf_counter()
         result = await assistant.answer(ctx)
     except Unauthorized:

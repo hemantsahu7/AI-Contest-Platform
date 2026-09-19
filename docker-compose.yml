@@ -68,11 +68,13 @@ services:
       - "8000:8000"
     environment:
       BACKEND_URL: http://backend:3000
-      # Optional: without a key the assistant runs in evidence-only fallback mode.
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      AI_MODEL: ${AI_MODEL:-claude-haiku-4-5-20251001}
+      # Gemini key stays server-side (this container only). Without it the assistant runs evidence-only.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-3.5-flash,gemini-2.5-flash-lite}
+      GEMINI_EMBED_MODEL: ${GEMINI_EMBED_MODEL:-gemini-embedding-001}
       AI_TIMEOUT_S: ${AI_TIMEOUT_S:-20}
-      AI_RATE_LIMIT_PER_HOUR: ${AI_RATE_LIMIT_PER_HOUR:-30}
+      AI_RATE_LIMIT_PER_HOUR: ${AI_RATE_LIMIT_PER_HOUR:-60}
     depends_on:
       - backend
 

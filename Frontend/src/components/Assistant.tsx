@@ -4,7 +4,7 @@ import { AiAnswer, Api } from '../api';
 type Turn = { q: string; a?: AiAnswer; error?: string; pending?: boolean };
 
 const SOURCE_LABEL: Record<string, string> = {
-  llm: 'AI model',
+  llm: 'Gemini',
   fallback: 'Evidence-only (no model)',
   policy: 'Policy refusal',
 };
@@ -69,7 +69,8 @@ function Answer({ a }: { a: AiAnswer }) {
   return (
     <div className="border rounded p-2 space-y-2">
       <div className="flex flex-wrap gap-2 text-xs">
-        <span className="bg-slate-100 rounded px-2 py-0.5">{SOURCE_LABEL[a.source]}</span>
+        <span className="bg-slate-100 rounded px-2 py-0.5">{SOURCE_LABEL[a.source]}{a.model ? ` - ${a.model}` : ''}</span>
+        {a.retrieval && <span className="bg-slate-100 rounded px-2 py-0.5">Retrieval: {a.retrieval}</span>}
         <span className={`rounded px-2 py-0.5 bg-slate-50 ${conf}`}>Confidence: {a.confidence}</span>
         <span className="text-slate-400">{a.timingMs} ms - req {a.requestId}</span>
       </div>
