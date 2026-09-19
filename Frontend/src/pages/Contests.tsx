@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Api, ApiError, Contest, User } from '../api';
 
-export function Contests({ go }: { user: User; go: (h: string) => void }) {
+export function Contests({ user, go }: { user: User; go: (h: string) => void }) {
   const [contests, setContests] = useState<Contest[] | null>(null);
   const [err, setErr] = useState('');
   const [id, setId] = useState('');
@@ -32,6 +32,11 @@ export function Contests({ go }: { user: User; go: (h: string) => void }) {
         </div>
         {err && <div className="text-red-600 text-sm mt-2">{err}</div>}
       </section>
+      {user.memberships.length === 0 && user.role !== 'ADMIN' && (
+        <div className="bg-amber-50 border border-amber-200 rounded p-3 text-sm">
+          You are not a member of any organization yet, so no contests are available. An organization instructor or admin must add you.
+        </div>
+      )}
       <section>
         <h2 className="font-semibold mb-2">Your organization's contests</h2>
         {!contests ? <div className="text-slate-500">Loading...</div> : contests.length === 0 ? <div className="text-slate-500">No contests available.</div> : (

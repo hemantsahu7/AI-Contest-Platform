@@ -2,7 +2,6 @@ import {
   ConflictException,
   Injectable,
   Logger,
-  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -32,15 +31,6 @@ export class AuthService {
       throw new ConflictException('Username or email is already registered');
     }
 
-    if (dto.organizationId) {
-      const org = await this.prisma.organization.findUnique({
-        where: { id: dto.organizationId },
-      });
-      if (!org) {
-        throw new NotFoundException('Organization not found');
-      }
-    }
-
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
     const user = await this.prisma.user.create({
       data: {
@@ -48,14 +38,6 @@ export class AuthService {
         email: dto.email,
         passwordHash,
         role: GlobalRole.LEARNER,
-        memberships: dto.organizationId
-          ? {
-              create: {
-                organizationId: dto.organizationId,
-                role: GlobalRole.LEARNER,
-              },
-            }
-          : undefined,
       },
       include: { memberships: true },
     });

@@ -18,20 +18,33 @@ describe('auth (e2e)', () => {
     const email = `${username}@example.com`;
     const register = await request(app.getHttpServer())
       .post('/auth/register')
-      .send({
-        username,
-        email,
-        password: 'Password123!',
-        organizationId: SEED.orgA,
-      })
+      .send({ username, email, password: 'Password123!' })
       .expect(201);
     expect(register.body.accessToken).toBeDefined();
     expect(register.body.user.passwordHash).toBeUndefined();
+    expect(register.body.user.memberships).toEqual([]);
 
     const token = await login(app, email);
     const me = await request(app.getHttpServer()).get('/auth/me').set(auth(token)).expect(200);
     expect(me.body.email).toBe(email);
     expect(me.body.passwordHash).toBeUndefined();
+  });
+
+  it('does not let public registration choose an organization (no self-join)', async () => {
+    const username = `sj${Date.now()}`;
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ username, email: `${username}@example.com`, password: 'Password123!', organizationId: SEED.orgA })
+      .expect(400);
+    const email = `ok${username}@example.com`;
+    const reg = await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ username: `ok${username}`, email, password: 'Password123!' })
+      .expect(201);
+    const token = reg.body.accessToken as string;
+    await request(app.getHttpServer()).get(`/contests/${SEED.contestOpen}`).set(auth(token)).expect(403);
+    const list = await request(app.getHttpServer()).get('/contests').set(auth(token)).expect(200);
+    expect(list.body).toEqual([]);
   });
 
   it('rejects invalid passwords', async () => {

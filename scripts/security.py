@@ -36,6 +36,25 @@ check("learner cannot add org members", call("POST", f"{API}/organizations/11111
 for path in (f"/contests/{CONTEST}", f"/contests/{CONTEST}/problems", f"/contests/{CONTEST}/submissions", f"/contests/{CONTEST}/leaderboard"):
     check(f"other-org learner blocked: {path.split('/')[-1] or 'contest'}", call("GET", API + path, lb)[0] == 403)
 check("other-org learner blocked from AI on this contest", call("POST", AI + "/ask", lb, {"question": "explain", "contestId": CONTEST})[0] == 403)
+print("== Organization self-join is not possible ==")
+import time as _time
+_uid = f"sj{int(_time.time())}"
+ORG_A = "11111111-1111-4111-8111-111111111111"
+s, b = call("POST", f"{API}/auth/register", None, {"username": _uid, "email": f"{_uid}@example.com", "password": "Password123!", "organizationId": ORG_A})
+check("public registration with an organizationId is rejected (400)", s == 400, f"{s} {str(b)[:100]}")
+s, b = call("POST", f"{API}/auth/register", None, {"username": _uid + "b", "email": f"{_uid}b@example.com", "password": "Password123!", "organizationId": "00000000-0000-4000-8000-000000000000"})
+check("registration with an arbitrary/unknown organizationId is also rejected (400)", s == 400, str(s))
+s, b = call("POST", f"{API}/auth/register", None, {"username": _uid + "c", "email": f"{_uid}c@example.com", "password": "Password123!"})
+check("registration without an organization succeeds with no memberships", s in (200, 201) and b["user"]["memberships"] == [], str(b)[:150])
+newbie = b["accessToken"]
+check("new user cannot see the org's contest (403)", call("GET", f"{API}/contests/{CONTEST}", newbie)[0] == 403)
+check("new user cannot list org problems / leaderboard (403)", call("GET", f"{API}/contests/{CONTEST}/problems", newbie)[0] == 403 and call("GET", f"{API}/contests/{CONTEST}/leaderboard", newbie)[0] == 403)
+check("new user cannot join the org's contest (403)", call("POST", f"{API}/contests/{CONTEST}/join", newbie)[0] == 403)
+check("new user's contest list is empty", call("GET", f"{API}/contests", newbie)[1] == [])
+check("new user cannot use the AI on the org's contest (403)", call("POST", AI + "/ask", newbie, {"question": "explain", "contestId": CONTEST})[0] == 403)
+check("new user cannot add themselves to the org (403)", call("POST", f"{API}/organizations/{ORG_A}/members", newbie, {"userId": b["user"]["id"], "role": "LEARNER"})[0] == 403)
+check("seeded org members still work (learner1 problems, instructor problems)", call("GET", f"{API}/contests/{CONTEST}/problems", l1)[0] == 200 and call("GET", f"{API}/contests/{CONTEST}/problems", ins)[0] == 200)
+
 learner_view = json.dumps([call("GET", f"{API}/contests/{CONTEST}/problems", l1)[1], call("GET", f"{API}/contests/{CONTEST}/leaderboard", l1)[1], lst])
 check("hidden test data appears in no learner-visible API response", HIDDEN not in learner_view)
 check("instructor can inspect (role works)", call("GET", f"{API}/submissions/{sub['id']}", ins)[0] == 200)

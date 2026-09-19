@@ -51,7 +51,7 @@ const post = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.strin
 
 export const Api = {
   login: (email: string, password: string) => api<{ accessToken: string; user: User }>('/auth/login', post({ email, password })),
-  register: (b: { username: string; email: string; password: string; organizationId?: string }) => api<{ accessToken: string; user: User }>('/auth/register', post(b)),
+  register: (b: { username: string; email: string; password: string }) => api<{ accessToken: string; user: User }>('/auth/register', post(b)),
   me: () => api<User>('/auth/me'),
   contests: () => api<Contest[]>('/contests'),
   contest: (id: string) => api<Contest>(`/contests/${id}`),
