@@ -85,3 +85,14 @@ TLE = "#include <iostream>\nint main(){while(true){} }"
 RE = "int main(){int*p=0;*p=1;return 0;}"
 OVERFLOW_INT = "#include <iostream>\nint main(){int a,b;std::cin>>a>>b;std::cout<<a+b<<std::endl;}"
 
+
+
+def real_key() -> str:
+    """The actual Gemini key (env or repo-root .env) so leak checks look for the literal secret, whatever its format."""
+    k = os.getenv("GEMINI_API_KEY", "").strip()
+    env = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    if not k and os.path.exists(env):
+        for line in open(env, encoding="utf-8"):
+            if line.startswith("GEMINI_API_KEY="):
+                k = line.split("=", 1)[1].strip()
+    return k

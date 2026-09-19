@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 
 log = logging.getLogger("ai.gemini")
 
@@ -12,7 +13,8 @@ MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash,gemini-2.5-flash-lite").split(",") if m.strip()]
 EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
 TIMEOUT_S = float(os.getenv("AI_TIMEOUT_S", "20"))
-MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "2048"))
+# Gemini 3.x "thinking" tokens count against this cap, so it must leave room for the JSON answer itself.
+MAX_OUTPUT_TOKENS = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "8192"))
 # Paid-tier list prices per 1M tokens, only used for the rough estimate (free tier costs 0).
 PRICE_IN = float(os.getenv("AI_PRICE_IN_PER_MTOK", "0.30"))
 PRICE_OUT = float(os.getenv("AI_PRICE_OUT_PER_MTOK", "2.50"))
@@ -22,8 +24,13 @@ def api_key() -> str:
     return os.getenv("GEMINI_API_KEY", "").strip()
 
 
+def disabled() -> bool:
+    """AI_MODEL_DISABLED=1 forces evidence-only mode (deterministic test runs, no quota use)."""
+    return os.getenv("AI_MODEL_DISABLED", "").strip().lower() in ("1", "true", "yes")
+
+
 def configured() -> bool:
-    return bool(api_key())
+    return bool(api_key()) and not disabled()
 
 
 class LLMUnavailable(Exception):
@@ -98,6 +105,9 @@ async def _call(model: str, system: str, user_text: str, schema) -> tuple[str, d
         text = resp.text or ""
     except Exception:  # blocked/safety-filtered responses raise on .text access
         text = ""
+    cands = getattr(resp, "candidates", None) or []
+    if cands and "MAX_TOKENS" in str(getattr(cands[0], "finish_reason", "")):
+        raise LLMUnavailable("truncated", "Gemini's reply was cut off (max output tokens reached)")
     return text, usage
 
 
@@ -117,25 +127,33 @@ def parse(text: str) -> dict:
     return out
 
 
+RETRY_NEXT_MODEL = {"model_not_found", "rate_limited", "api_error", "timeout"}  # quotas are per model on the free tier
+MAX_MODEL_ATTEMPTS = 3
+TOTAL_BUDGET_S = float(os.getenv("GEMINI_TOTAL_BUDGET_S", "45"))
+
+
 async def generate(system: str, payload: dict, schema=None) -> tuple[dict, dict, str]:
-    """Returns (parsed_json, usage, model_used). Raises LLMUnavailable on any failure."""
+    """Returns (parsed_json, usage, model_used). Tries at most MAX_MODEL_ATTEMPTS models within TOTAL_BUDGET_S.
+    Never retries invalid-key / empty / malformed replies (those would not improve). Raises LLMUnavailable."""
+    if disabled():
+        raise LLMUnavailable("disabled", "the model is switched off (AI_MODEL_DISABLED)")
     if not configured():
         raise LLMUnavailable("no_key", "GEMINI_API_KEY is not set")
     user_text = json.dumps(payload, ensure_ascii=False)
+    models = ([MODEL] + [m for m in FALLBACK_MODELS if m != MODEL])[:MAX_MODEL_ATTEMPTS]
+    deadline = time.monotonic() + TOTAL_BUDGET_S
     last: LLMUnavailable | None = None
-    for model in [MODEL] + [m for m in FALLBACK_MODELS if m != MODEL]:
+    for i, model in enumerate(models):
         try:
             text, usage = await _call(model, system, user_text, schema)
             return parse(text), usage, model
         except LLMUnavailable as e:
             last = e
-            if e.kind != "model_not_found":
-                raise
         except Exception as exc:
             last = classify(exc)
-            log.warning("gemini model=%s failed kind=%s", model, last.kind)
-            if last.kind != "model_not_found":
-                raise last from None
+        log.warning("gemini model=%s failed kind=%s", model, last.kind)
+        if last.kind not in RETRY_NEXT_MODEL or time.monotonic() + 2 > deadline:
+            break
     raise last or LLMUnavailable("api_error", "Gemini API error")
 
 

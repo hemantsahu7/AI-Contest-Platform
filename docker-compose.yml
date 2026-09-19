@@ -72,8 +72,9 @@ services:
       DATABASE_URL: postgresql://shodh:shodh@postgres:5432/shodh
       # Gemini key stays server-side (this container only). Without it the assistant runs evidence-only.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
-      GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-3.5-flash,gemini-2.5-flash-lite}
+      AI_MODEL_DISABLED: ${AI_MODEL_DISABLED:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      GEMINI_FALLBACK_MODELS: ${GEMINI_FALLBACK_MODELS:-gemini-3.5-flash,gemini-2.5-flash}
       GEMINI_EMBED_MODEL: ${GEMINI_EMBED_MODEL:-gemini-embedding-001}
       AI_TIMEOUT_S: ${AI_TIMEOUT_S:-20}
       AI_RATE_LIMIT_PER_HOUR: ${AI_RATE_LIMIT_PER_HOUR:-60}

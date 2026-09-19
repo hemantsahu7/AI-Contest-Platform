@@ -107,6 +107,23 @@ def test_empty_or_malformed_reply_degrades(monkeypatch, text, needle):
     assert r["source"] == "fallback" and needle in r["degraded"]
 
 
+def test_disabled_switch_forces_evidence_only_even_with_a_key(monkeypatch):
+    monkeypatch.setenv("AI_MODEL_DISABLED", "1")
+
+    async def boom(*a, **k):
+        raise AssertionError("no call when disabled")
+
+    r = run_ask("Give me a hint", monkeypatch, boom, problem_id="p1")
+    assert r["source"] == "fallback" and "switched off" in r["degraded"]
+    monkeypatch.delenv("AI_MODEL_DISABLED")
+
+
+def test_gaps_found_during_evidence_gathering_are_always_shown(monkeypatch):
+    reply = good_reply()  # the model reports no gaps of its own
+    r = run_ask("Why did my latest submission fail?", monkeypatch, reply, problem_id="p1")
+    assert any("hidden test failed" in m for m in r["missing"])
+
+
 def test_missing_key_degrades_without_calling(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
@@ -141,3 +158,36 @@ def test_unanswerable_question_sends_model_no_fabricated_evidence(monkeypatch):
     assert r["confidence"] == "low" and not r["claims"]
     kinds = {e["kind"] for e in sent["authorized_evidence"]}
     assert kinds <= {"contest", "problem", "material"}, kinds  # nothing about any submission is invented or leaked
+
+
+def test_rate_limited_primary_model_falls_through_to_next_model(monkeypatch):
+    tried = []
+
+    async def call(model, *a, **k):
+        tried.append(model)
+        if len(tried) == 1:
+            raise errors.ClientError(429, {"error": {"message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+        return json.dumps({"answer": "ok [S1]", "claims": [], "confidence": "low", "missing": [], "needs_clarification": False}), {}
+
+    r = run_ask("Why did my latest submission fail?", monkeypatch, call, problem_id="p1")
+    assert r["source"] == "llm" and len(tried) == 2 and r["model"] == tried[1] and "degraded" not in r
+
+
+def test_attempts_are_bounded_and_invalid_key_is_not_retried(monkeypatch):
+    tried = []
+
+    async def limited(model, *a, **k):
+        tried.append(model)
+        raise errors.ClientError(429, {"error": {"message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+
+    r = run_ask("Give me a hint", monkeypatch, limited, problem_id="p1")
+    assert len(tried) == gemini.MAX_MODEL_ATTEMPTS and "rate limit" in r["degraded"]
+
+    tried.clear()
+
+    async def bad_key(model, *a, **k):
+        tried.append(model)
+        raise errors.ClientError(400, {"error": {"message": "API key not valid.", "status": "INVALID_ARGUMENT"}})
+
+    r = run_ask("Give me a hint", monkeypatch, bad_key, problem_id="p1")
+    assert len(tried) == 1 and "rejected" in r["degraded"]

@@ -30,6 +30,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": {"code": 404, "message": "model not found", "status": "NOT_FOUND"}})
         if kind == "empty":
             return self._send(200, {"candidates": [{"content": {"role": "model", "parts": [{"text": ""}]}, "finishReason": "STOP"}]})
+        if kind == "truncated":
+            return self._send(200, {"candidates": [{"content": {"role": "model", "parts": [{"text": "{\"answer\": \"cut"}]}, "finishReason": "MAX_TOKENS"}]})
         if kind == "blocked":
             return self._send(200, {"promptFeedback": {"blockReason": "SAFETY"}})
         if "embed" in self.path.lower():
@@ -82,7 +84,7 @@ def test_real_sdk_request_and_response_parsing():
     assert json.loads(req["body"]["contents"][0]["parts"][0]["text"])["question"] == "q"
 
 
-@pytest.mark.parametrize("kind,exp", [("429", "rate_limited"), ("invalid", "invalid_key"), ("empty", "empty"), ("blocked", "empty")])
+@pytest.mark.parametrize("kind,exp", [("429", "rate_limited"), ("invalid", "invalid_key"), ("empty", "empty"), ("blocked", "empty"), ("truncated", "truncated")])
 def test_real_sdk_error_paths(kind, exp):
     MODE["kind"] = kind
     with pytest.raises(gemini.LLMUnavailable) as e:

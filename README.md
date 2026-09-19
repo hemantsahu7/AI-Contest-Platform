@@ -29,7 +29,8 @@ docker compose up --build
 Open <http://localhost:5173>. Swagger: <http://localhost:3000/api/docs>.
 
 - **`GEMINI_API_KEY`** (in `.env`, git-ignored): get one at <https://aistudio.google.com/apikey>. It is passed only to the `ai` container; the frontend container has no access to it. Without it the assistant runs in **evidence-only mode** (visible notice in the UI) and everything else works.
-- `GEMINI_MODEL` (default `gemini-2.5-flash`), `GEMINI_FALLBACK_MODELS` (tried in order if the model name returns 404), `GEMINI_EMBED_MODEL` (default `gemini-embedding-001`, 768 dims), `AI_TIMEOUT_S` (20), `AI_RATE_LIMIT_PER_HOUR` (60 model calls per user).
+- `GEMINI_MODEL` (default `gemini-3.6-flash`), `GEMINI_FALLBACK_MODELS` (tried in order if the model name returns 404), `GEMINI_EMBED_MODEL` (default `gemini-embedding-001`, 768 dims), `AI_TIMEOUT_S` (20), `AI_RATE_LIMIT_PER_HOUR` (60 model calls per user), `AI_MODEL_DISABLED=1` (force evidence-only mode: no Gemini calls, no quota use).
+- **Free-tier quota:** with the key used during development, `gemini-3.6-flash` allowed **20 requests/day** (`limit: 20` in Google's 429 message). Quotas are per model, so on a 429/5xx/timeout/404 the service tries the next model in `GEMINI_FALLBACK_MODELS` (max 3 attempts, 45 s budget) and the answer badge shows which model answered; if all fail it degrades to evidence-only. Keep some quota for your demo (the regression scripts below can be run with `AI_MODEL_DISABLED=1`).
 - Apply a new key: `docker compose up -d --force-recreate ai`.
 - Reset the database (needed once if you previously ran the older `postgres:16-alpine` image, and whenever the seed changes IDs): `docker compose down -v`.
 
@@ -56,15 +57,17 @@ Open contest ID: `33333333-3333-4333-8333-333333333331` (Sum, Max, Absolute Diff
 ## Verification commands
 
 ```bash
+# Deterministic suites: run them with the model off so wording is stable and no Gemini quota is used:
+#   AI_MODEL_DISABLED=1 docker compose up -d --force-recreate ai      (afterwards: docker compose up -d --force-recreate ai)
 python scripts/e2e.py          # 35 checks: real Docker judging, all verdicts, leaderboard, security basics, AI + multi-hop
-python scripts/security.py     # 33 focused security checks (authN/authZ, private data, AI protections, key not in browser)
+python scripts/security.py     # 34 focused security checks (authN/authZ, private data, AI protections, key not in browser)
 python scripts/recovery.py     # infrastructure failure + retry recovery + exhaustion (removes/restores the judge image)
 python scripts/gemini_live.py  # REAL Gemini verification (needs GEMINI_API_KEY; exits 2 if not configured)
-docker compose run --rm ai python -m pytest -q   # 47 AI tests (includes real pgvector tests)
+docker compose run --rm ai python -m pytest -q   # 52 AI tests (includes real pgvector tests; never calls the real Gemini API)
 cd Backend && npm test         # 8 backend unit tests
 ```
 
-Results of the last full run (fresh volume, no `GEMINI_API_KEY` set): e2e 35/35, security 33/33, recovery OK, AI tests 47 passed, backend unit tests 8 passed, frontend production build (`tsc` + `vite build`, part of `docker compose build`) succeeded.
+Results of the last full run (fresh volume): e2e 35/35, security 34/34, recovery OK (all with `AI_MODEL_DISABLED=1`), AI tests 52 passed, backend unit tests 8 passed, frontend production build (`tsc` + `vite build`, part of `docker compose build`) succeeded.
 
 ## Architecture and decisions
 
@@ -76,7 +79,7 @@ Results of the last full run (fresh volume, no `GEMINI_API_KEY` set): e2e 35/35,
 - **Grounding.** Evidence items: `P` problem, `S` submission, `X` judge execution, `O` compiler output, `H` static checks of the learner's own code, `M` learning material (with `updated` and stale/DEPRECATED flags), `A` instructor aggregate, `G`/`K` relationship paths. Claims are `observation` or `hypothesis`; an observation without valid evidence ids is downgraded; confidence is capped at *medium* when information is missing or stale; gaps are listed under "Not established". During a live contest code blocks are stripped from answers.
 - **Retrieval.** (1) Entity resolution: free-text problem names ("the max one", typos) -> contest problem, asking for clarification when ambiguous. (2) BM25 over learning notes + tag/title boost + deprecated-note demotion. (3) When `GEMINI_API_KEY` and the DB are available: Gemini embeddings stored in pgvector, cosine search, fused with BM25 by reciprocal-rank fusion, then freshness rerank (`retrieval: hybrid`). Otherwise BM25 alone and the response says why (`retrieval: bm25 (vector unavailable: ...)`). Indexing is lazy, idempotent (content hash) and removes deleted notes.
 - **Multi-hop.** For "what did I struggle with / what should I study" the service builds a per-request typed-edge graph over the caller's authorized submissions (`User -SUBMITTED-> Submission -FOR-> Problem`, `Submission -RESULTED_IN-> Verdict`, `Problem -RELATED_TO-> Material`), walks it (learner -> submissions -> problems + verdict history -> material) and cites each path (`G*`). Judge errors are not counted as struggles. For instructors it groups learners by the material their failures point to and offers a *hypothesis* of a shared prerequisite gap (`K*`).
-- **Cost and limits.** Rate limit per user (policy refusals are free), 20 s timeout, `GET /ai/usage` reports calls, tokens and a paid-tier estimate (`AI_PRICE_*` env). Rough estimate, not measured live: about 1.5k input + 0.4k output tokens per question, i.e. well under $0.01 per question even on paid pricing, and free on the Gemini free tier subject to its rate limits.
+- **Cost and limits.** Rate limit per user (policy refusals are free), 20 s timeout, `GET /ai/usage` reports calls, tokens and a paid-tier estimate (`AI_PRICE_*` env). Measured over ~10 live calls: roughly 1.2-1.7k input and 1.0-1.7k output tokens per answer (output includes thinking tokens), which the usage endpoint prices at about $0.003 per answer using the configurable `AI_PRICE_*` defaults (assumed Flash list prices, not confirmed for 3.x); on the free tier it costs nothing but is limited to ~20 requests/day per model with this key.
 - **Logs.** `req=<id> user mode contest problem source confidence refusal retrieval evidence=[ids] gather_ms answer_ms total_ms` per AI request (id returned to the UI); backend logs submission creation, enqueue, judge start/retry/completion with submission ids.
 
 ## Access rules
@@ -98,7 +101,8 @@ Implemented and tested: Stage 1 backend + Docker judge, Stage 2 UI, evidence-gro
 **Not implemented / incomplete (please read):**
 - **No graph database and no GraphRAG.** Relationship traversal is an in-memory structure rebuilt per request from authorized data. Nothing is stored as a knowledge graph; entity duplicates/conflicting evidence across sources are only handled via problem-name resolution and stale-material flags.
 - **No agent loop.** The AI does not choose tools; a deterministic pipeline gathers bounded read-only evidence, then Gemini phrases the answer. "Agentic tool use" from Stage 3 is therefore not met.
-- **The live Gemini API path has not been verified** in this repository state because no key was available while building. Verified instead: request/response handling through the real `google-genai` SDK against a local fake Gemini HTTP server (request shape, structured-output schema, usage parsing, 429/invalid-key/empty/blocked/404-fallback), and the mocked-call behaviour of the assistant. Unverified: that the default model names (`gemini-2.5-flash`, fallbacks, `gemini-embedding-001`) are enabled for your key, real answer quality, real embedding quality. Run `python scripts/gemini_live.py` once with a key to verify.
+- **Live Gemini verification was partial.** With a real key, `python scripts/gemini_live.py` passed 13 of 14 checks (grounded problem explanation, hint obeying the live hint policy, verdict explanation citing judge evidence and not changing the verdict, unanswerable and ambiguous questions answered with low confidence and explicit insufficiency, all four protected-information refusals, no key in the browser bundle). The one failure (instructor aggregate answer came back as incomplete JSON because Gemini 3.x thinking tokens consumed the output cap) was fixed (cap 8192, explicit `truncated` error) and the two instructor questions were then re-run live successfully by hand; **the full script was not re-run afterwards** because the daily free-tier quota was used up. Live hybrid retrieval was also confirmed: a paraphrased question ("sums give strange negative numbers when inputs are huge") retrieved the integer-overflow note via real Gemini embeddings + pgvector. Not measured: answer quality beyond these spot checks, latency under load.
+- **Model availability is per key/tier.** `gemini-3.6-flash` answered the first ~20 calls, then hit the free-tier daily quota; answers then came from the fallback model `gemini-3.5-flash`. Latency is 6-16 s per answer (mostly thinking time).
 - **pgvector tests use a synthetic embedder** (they prove storage, cosine search, idempotent indexing, cleanup and fusion, not Gemini's semantic quality). No retrieval benchmark/comparison was run, so no comparison numbers are claimed. The learning corpus is 8 short notes.
 - The AI service connects to Postgres with the same superuser as the backend (should be a separate restricted role); it only touches its own table.
 - Judge version history is not exposed to the AI, so "did a judge change affect outcomes?" is answered as *not established*.
@@ -116,6 +120,8 @@ Code and design were AI-assisted (Claude Code). Verification was by execution, n
 - For an off-topic question the assistant attached the learner's latest submission (own data, but irrelevant and sent to the model); it now attaches submissions only when the question is about one.
 - The static check flagged `int main` as "32-bit int overflow risk"; fixed + regression test.
 - `docker compose up -d ai` restarts the backend, so scripts run right after it hit a starting backend; the scripts now wait for readiness.
+- Live Gemini runs exposed three real problems, all fixed: (1) thinking tokens truncated longer answers (malformed JSON) -> larger output cap + explicit `truncated` error; (2) a 429/503 on the primary model degraded the answer although another model was available -> bounded try-next-model; (3) for unanswerable questions Gemini said "insufficient evidence" but labeled confidence *medium* -> prompt now requires *low*, and evidence-gathering gaps are always merged into "Not established".
+- The AI unit tests would have called the real Gemini API whenever a key was in the environment; a `conftest.py` now clears Gemini variables for every test.
 
 ## Time spent
 

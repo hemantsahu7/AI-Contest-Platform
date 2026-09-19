@@ -6,7 +6,7 @@ import sys
 import urllib.request
 
 import e2e_lib
-from e2e_lib import AI, API, CONTEST, SUM, call, check, login, submit_and_wait
+from e2e_lib import AI, API, CONTEST, SUM, call, check, login, real_key, submit_and_wait
 
 ADMIN_ID = "22222222-2222-4222-8222-222222222221"
 HIDDEN = "4000000000"  # expected output of the seeded hidden Sum test
@@ -72,12 +72,14 @@ check("no AI response contains secrets or hidden data", not any(x in json.dumps(
 print("== Gemini key never reaches the browser ==")
 html = urllib.request.urlopen("http://localhost:5173/").read().decode()
 js = "".join(urllib.request.urlopen("http://localhost:5173" + p).read().decode() for p in re.findall(r'src="(/assets/[^"]+)"', html))
-check("frontend bundle has no Gemini key or key variable name", not re.search(r"AIza[0-9A-Za-z_-]{10,}", js) and "GEMINI_API_KEY" not in js)
+KEY = real_key()
+check("frontend bundle has no Gemini key (literal or AIza-pattern) or key variable name", not re.search(r"AIza[0-9A-Za-z_-]{10,}", js) and "GEMINI_API_KEY" not in js and not (KEY and KEY in js))
 check("frontend calls only same-origin /api and /ai (no googleapis)", "googleapis" not in js and "generativelanguage" not in js)
 env = subprocess.run(["docker", "compose", "exec", "-T", "frontend", "env"], capture_output=True, text=True).stdout
 check("frontend container has no GEMINI_* env", "GEMINI" not in env)
 health = json.dumps(call("GET", AI + "/health")[1]) + json.dumps(call("GET", AI + "/usage")[1])
-check("AI health/usage expose only a configured flag, never a key value", not re.search(r"AIza[0-9A-Za-z_-]{10,}", health) and "GEMINI_API_KEY" not in health)
+check("AI health/usage expose only a configured flag, never a key value", not re.search(r"AIza[0-9A-Za-z_-]{10,}", health) and "GEMINI_API_KEY" not in health and not (KEY and KEY in health))
+check("no AI response contains the literal key", not (KEY and KEY in json.dumps(responses)))
 
 print(f"\n{e2e_lib.passed} passed, {e2e_lib.failed} failed")
 sys.exit(1 if e2e_lib.failed else 0)
