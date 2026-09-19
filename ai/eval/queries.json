@@ -1,0 +1,124 @@
+[
+ {
+  "id": "k1",
+  "type": "keyword",
+  "query": "integer overflow when adding two large numbers",
+  "relevant": [
+   "integer-overflow"
+  ]
+ },
+ {
+  "id": "k2",
+  "type": "keyword",
+  "query": "g++ compilation error missing semicolon",
+  "relevant": [
+   "compilation-errors"
+  ]
+ },
+ {
+  "id": "k3",
+  "type": "keyword",
+  "query": "time limit exceeded infinite loop",
+  "relevant": [
+   "time-limit"
+  ]
+ },
+ {
+  "id": "k4",
+  "type": "keyword",
+  "query": "segmentation fault array out of bounds",
+  "relevant": [
+   "runtime-errors"
+  ]
+ },
+ {
+  "id": "k5",
+  "type": "keyword",
+  "query": "wrong answer edge cases negative numbers",
+  "relevant": [
+   "edge-cases-wrong-answer"
+  ]
+ },
+ {
+  "id": "k6",
+  "type": "keyword",
+  "query": "how to read input with cin and print output",
+  "relevant": [
+   "cpp-input-output"
+  ]
+ },
+ {
+  "id": "k7",
+  "type": "keyword",
+  "query": "judge error infrastructure failure container",
+  "relevant": [
+   "judge-infrastructure"
+  ]
+ },
+ {
+  "id": "k8",
+  "type": "keyword",
+  "query": "division by zero crash exit code",
+  "relevant": [
+   "runtime-errors"
+  ]
+ },
+ {
+  "id": "p1",
+  "type": "paraphrase",
+  "query": "my sums turn negative for huge inputs",
+  "relevant": [
+   "integer-overflow"
+  ]
+ },
+ {
+  "id": "p2",
+  "type": "paraphrase",
+  "query": "the program never terminates and gets killed",
+  "relevant": [
+   "time-limit"
+  ]
+ },
+ {
+  "id": "p3",
+  "type": "paraphrase",
+  "query": "the compiler refuses my source file",
+  "relevant": [
+   "compilation-errors"
+  ]
+ },
+ {
+  "id": "p4",
+  "type": "paraphrase",
+  "query": "the platform itself broke, not my solution",
+  "relevant": [
+   "judge-infrastructure"
+  ]
+ },
+ {
+  "id": "p5",
+  "type": "paraphrase",
+  "query": "my output has extra text so the grader rejects it",
+  "relevant": [
+   "cpp-input-output",
+   "edge-cases-wrong-answer"
+  ]
+ },
+ {
+  "id": "p6",
+  "type": "paraphrase",
+  "query": "passes the samples but fails on hidden data with the largest values",
+  "relevant": [
+   "integer-overflow",
+   "edge-cases-wrong-answer"
+  ]
+ },
+ {
+  "id": "p7",
+  "type": "paraphrase",
+  "query": "program crashed immediately when it started",
+  "relevant": [
+   "runtime-errors"
+  ]
+ }
+]

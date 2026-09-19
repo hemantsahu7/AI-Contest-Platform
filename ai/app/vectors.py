@@ -16,6 +16,7 @@ log = logging.getLogger("ai.vectors")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 DIMS = 768
+TABLE = "ai_material_embeddings"  # module constant (never user input); the offline retrieval eval points it at a scratch table
 Embedder = Callable[[list[str], str], Awaitable[list[list[float]]]]
 
 _lock = asyncio.Lock()
@@ -48,10 +49,10 @@ async def index_materials(docs: list[Material], embed: Embedder = _default_embed
     """Idempotent: only new/changed documents (by content hash + model) are embedded. Returns #embedded."""
     async with await _connect() as conn:
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        await conn.execute(f"""CREATE TABLE IF NOT EXISTS ai_material_embeddings (
+        await conn.execute(f"""CREATE TABLE IF NOT EXISTS {TABLE} (
             id text PRIMARY KEY, content_hash text NOT NULL, model text NOT NULL,
             embedding vector({DIMS}) NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())""")
-        cur = await conn.execute("SELECT id, content_hash, model FROM ai_material_embeddings")
+        cur = await conn.execute(f"SELECT id, content_hash, model FROM {TABLE}")
         have = {r[0]: (r[1], r[2]) for r in await cur.fetchall()}
         todo = []
         for d in docs:
@@ -62,20 +63,20 @@ async def index_materials(docs: list[Material], embed: Embedder = _default_embed
             vecs = await embed([_doc_text(d) for d, _ in todo], "RETRIEVAL_DOCUMENT")
             for (d, h), v in zip(todo, vecs):
                 await conn.execute(
-                    """INSERT INTO ai_material_embeddings (id, content_hash, model, embedding) VALUES (%s, %s, %s, %s::vector)
+                    f"""INSERT INTO {TABLE} (id, content_hash, model, embedding) VALUES (%s, %s, %s, %s::vector)
                        ON CONFLICT (id) DO UPDATE SET content_hash = EXCLUDED.content_hash, model = EXCLUDED.model,
                        embedding = EXCLUDED.embedding, updated_at = now()""",
                     (d.id, h, gemini.EMBED_MODEL, _lit(v)),
                 )
         # drop embeddings of deleted material so stale documents cannot be retrieved
-        await conn.execute("DELETE FROM ai_material_embeddings WHERE NOT (id = ANY(%s))", ([d.id for d in docs],))
+        await conn.execute(f"DELETE FROM {TABLE} WHERE NOT (id = ANY(%s))", ([d.id for d in docs],))
         return len(todo)
 
 
 async def vector_search(query_vec: list[float], top_k: int = 5) -> list[tuple[str, float]]:
     async with await _connect() as conn:
         cur = await conn.execute(
-            "SELECT id, 1 - (embedding <=> %s::vector) AS sim FROM ai_material_embeddings ORDER BY embedding <=> %s::vector LIMIT %s",
+            f"SELECT id, 1 - (embedding <=> %s::vector) AS sim FROM {TABLE} ORDER BY embedding <=> %s::vector LIMIT %s",
             (_lit(query_vec), _lit(query_vec), top_k),
         )
         return [(r[0], float(r[1])) for r in await cur.fetchall()]

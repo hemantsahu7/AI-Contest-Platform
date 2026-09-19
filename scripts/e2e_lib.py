@@ -2,6 +2,7 @@
 (Original docstring: End-to-end check against the running stack (real Docker judge, real queue, real AI service).
 Usage: python scripts/e2e.py   (env BASE=http://localhost:5173 goes through the frontend proxy)
 """
+import atexit
 import json
 import os
 import sys
@@ -16,6 +17,15 @@ SUM, MUL = "44444444-4444-4444-8444-444444444441", "44444444-4444-4444-8444-4444
 LEARNER2_ID = "22222222-2222-4222-8222-222222222224"
 PW = "Password123!"
 passed, failed = 0, 0
+TIMINGS = {"submissions": [], "ai": []}  # dumped to $EVAL_TIMINGS_FILE at exit (used by run_eval.py)
+
+
+@atexit.register
+def _dump_timings():
+    path = os.getenv("EVAL_TIMINGS_FILE")
+    if path:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(TIMINGS, f, indent=1)
 
 
 def call(method, url, token=None, body=None):
@@ -23,15 +33,20 @@ def call(method, url, token=None, body=None):
     req.add_header("Content-Type", "application/json")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
+    t0 = time.perf_counter()
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
-            return r.status, json.loads(r.read() or b"{}")
+            status, out = r.status, json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
         raw = e.read() or b"{}"
         try:
-            return e.code, json.loads(raw)
+            status, out = e.code, json.loads(raw)
         except ValueError:
-            return e.code, {"raw": raw[:200].decode("utf-8", "replace")}
+            status, out = e.code, {"raw": raw[:200].decode("utf-8", "replace")}
+    if url.endswith("/ai/ask") and status == 200 and isinstance(out, dict) and "timingMs" in out:
+        TIMINGS["ai"].append({"question": (body or {}).get("question", "")[:70], "source": out.get("source"), "retrieval": out.get("retrieval"),
+                              "server_ms": out.get("timingMs"), "client_ms": round((time.perf_counter() - t0) * 1000)})
+    return status, out
 
 
 def check(name, cond, detail=""):
@@ -58,6 +73,16 @@ def wait_ready(timeout=90):
 wait_ready()
 
 
+def require_deterministic():
+    """Refuse to run deterministic suites while a Gemini model is active: they would spend API quota and
+    their wording assertions assume evidence-only mode. Start the AI service with AI_MODEL_DISABLED=1 (run_eval.py does)."""
+    s, h = call("GET", AI + "/health")
+    if h.get("model_configured") and os.getenv("ALLOW_LIVE_MODEL") != "1":
+        raise SystemExit("Gemini is enabled on the ai service; this suite is deterministic and would consume quota. "
+                         "Run: AI_MODEL_DISABLED=1 docker compose up -d --force-recreate ai   (or use scripts/run_eval.py), "
+                         "or set ALLOW_LIVE_MODEL=1 to override.")
+
+
 def login(email):
     s, b = call("POST", API + "/auth/login", body={"email": email, "password": PW})
     assert s in (200, 201), (email, s, b)
@@ -65,6 +90,7 @@ def login(email):
 
 
 def submit_and_wait(token, problem, code):
+    t0 = time.perf_counter()
     s, b = call("POST", f"{API}/contests/{CONTEST}/problems/{problem}/submissions", token, {"language": "cpp", "sourceCode": code})
     assert s in (200, 201), (s, b)
     sid, seen = b["submissionId"], [b["status"]]
@@ -73,6 +99,7 @@ def submit_and_wait(token, problem, code):
         if sub["status"] != seen[-1]:
             seen.append(sub["status"])
         if sub["status"] in ("COMPLETED", "INFRASTRUCTURE_ERROR"):
+            TIMINGS["submissions"].append({"problem": problem[-2:], "verdict": sub["verdict"], "seconds": round(time.perf_counter() - t0, 2), "statuses": seen})
             return sub, seen
         time.sleep(0.5)
     raise TimeoutError(sid)

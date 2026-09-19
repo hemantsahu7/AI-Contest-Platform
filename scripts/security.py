@@ -15,6 +15,8 @@ SECRETS = ["dev-only-change-me", "JWT_SECRET", "passwordHash", "$2b$"]
 l1, l2, lb, ins = (login(e) for e in ("learner1@example.com", "learner2@example.com", "learner-b@example.com", "instructor@example.com"))
 GOOD = "#include <iostream>\nint main(){long long a,b;std::cin>>a>>b;std::cout<<a+b<<std::endl;}"
 
+e2e_lib.require_deterministic()
+
 print("== Authentication ==")
 for name, s in [("contests", call("GET", f"{API}/contests")[0]), ("submission", call("GET", f"{API}/submissions/x")[0]),
                 ("leaderboard", call("GET", f"{API}/contests/{CONTEST}/leaderboard")[0]),

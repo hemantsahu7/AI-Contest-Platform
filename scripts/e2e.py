@@ -5,6 +5,8 @@ from e2e_lib import API, AI, CONTEST, SUM, MUL, LEARNER2_ID, AC, WA, CE, TLE, RE
 import e2e_lib
 import json, sys
 
+e2e_lib.require_deterministic()
+
 print("== Stage 1/2: login, contest, problems, real judging ==")
 l1, l2, lb, ins = (login(e) for e in ("learner1@example.com", "learner2@example.com", "learner-b@example.com", "instructor@example.com"))
 s, _ = call("POST", f"{API}/contests/{CONTEST}/join", l1)

@@ -313,6 +313,8 @@ async def hybrid_search(query: str, boost_tags: list[str] | None = None, top_k: 
     bm = INDEX.search(query, top_k=8, boost_tags=boost_tags)
     if not vectors.enabled():
         return bm[:top_k], "bm25 (vector store not configured)"
+    if gemini.disabled():
+        return bm[:top_k], "bm25 (vector skipped: AI_MODEL_DISABLED)"
     if not gemini.configured():
         return bm[:top_k], "bm25 (vector unavailable: no GEMINI_API_KEY for embeddings)"
     try:
