@@ -6,6 +6,8 @@ Coding-contest platform with a real Docker judge and an evidence-grounded AI ass
 
 Goal: go from a fresh clone to a running, logged-in and tested system **without reading any source code**. Everything runs in Docker; you do not install Node, Postgres, Redis or a C++ compiler yourself.
 
+**Verified:** this guide was followed literally in a brand-new clone (Windows 11, Docker 29 / Compose v5, no `.env` key, no local Node): `docker compose up --build` took about 2.5 minutes, migrations and seed ran automatically, the walkthrough in steps 5-8 was checked with 42 automated assertions (all accounts, all seven programs, leaderboard 200 to 300, instructor and cross-organization checks, AI answers and refusals), every command in step 9 passed, and `python scripts/run_eval.py` finished with `Overall: PASS` in 287 s.
+
 **Contents:** [Prerequisites](#prerequisites) · [1. Clone](#1-clone-the-repository) · [2. Configure](#2-configure-the-environment) · [3. Start](#3-start-the-docker-services) · [4. Database and seed data](#4-database-initialisation-and-seed-data-automatic) · [5. Log in](#5-log-in-with-the-provided-accounts) · [6. Learner flow](#6-test-the-learner-flow) · [7. Instructor flow](#7-test-the-instructor-flow) · [8. AI flow](#8-test-the-ai-flow) · [9. Automated tests](#9-run-the-automated-tests) · [10. Complete evaluation](#10-run-the-complete-evaluation-single-command) · [11. Stop, reset, troubleshoot](#11-stop-reset-and-troubleshoot)
 
 ### Prerequisites
@@ -182,7 +184,7 @@ On Linux/macOS use `python3`. The suites add a few submissions and users to the 
 ### 10. Run the complete evaluation (single command)
 
 ```bash
-python scripts/run_eval.py        # python3 on Linux/macOS; about 4 minutes on a warm machine
+python scripts/run_eval.py        # python3 on Linux/macOS; about 4-5 minutes (287 s in the fresh-clone run above; longer on a cold Docker cache)
 ```
 
 This one command does everything in step 9 and more: it starts the stack if it is not running, switches the AI service to evidence-only mode (**Gemini is never called, no quota is used**) and restores it afterwards, builds all images (backend `nest build`, frontend `tsc` + `vite build`, ai), then runs the AI unit tests, backend unit tests, the E2E flow, the security suite, the recovery suite and the retrieval comparison. It prints a summary, **writes [`EVALUATION.md`](EVALUATION.md)** (per-check expected vs actual, submission-to-verdict timings, retrieval table, known issues) and **exits non-zero if any stage fails**. Success ends with `Overall: PASS in ...s -> EVALUATION.md`. Options: `--skip-builds`, `--no-start`, `--keep-model-off`. Note that the AI service and backend containers are briefly recreated, so the UI is unavailable for a moment. Results of the last run are in the [Evaluation](#evaluation) section.
