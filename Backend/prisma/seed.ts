@@ -127,7 +127,7 @@ async function main() {
     {
       id: SEED_IDS.problemSum,
       title: 'Sum of Two Numbers',
-      description: 'Read two integers A and B and print A+B.',
+      description: 'Read two integers A and B and print A+B. Constraints: -5000000000 <= A, B <= 5000000000.',
       difficulty: Difficulty.EASY,
       points: 100,
       timeLimitMs: 1000,
@@ -144,7 +144,7 @@ async function main() {
     {
       id: SEED_IDS.problemMax,
       title: 'Maximum of Two',
-      description: 'Read two integers and print the larger one.',
+      description: 'Read two integers and print the larger one. Constraints: -1000000000 <= A, B <= 1000000000.',
       difficulty: Difficulty.EASY,
       points: 100,
       timeLimitMs: 1000,
@@ -159,7 +159,7 @@ async function main() {
     {
       id: SEED_IDS.problemDiff,
       title: 'Absolute Difference',
-      description: 'Read two integers and print |A-B|.',
+      description: 'Read two integers and print |A-B|. Constraints: -1000000000 <= A, B <= 1000000000.',
       difficulty: Difficulty.EASY,
       points: 100,
       timeLimitMs: 1000,
@@ -174,7 +174,7 @@ async function main() {
     {
       id: SEED_IDS.problemMul,
       title: 'Product',
-      description: 'Read two integers and print A*B. Time limit is tight enough for timeout demos with an infinite loop.',
+      description: 'Read two integers and print A*B. Constraints: -1000000000 <= A, B <= 1000000000. Time limit is tight enough for timeout demos with an infinite loop.',
       difficulty: Difficulty.MEDIUM,
       points: 150,
       timeLimitMs: 500,

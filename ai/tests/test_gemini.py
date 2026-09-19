@@ -191,3 +191,38 @@ def test_attempts_are_bounded_and_invalid_key_is_not_retried(monkeypatch):
 
     r = run_ask("Give me a hint", monkeypatch, bad_key, problem_id="p1")
     assert len(tried) == 1 and "rejected" in r["degraded"]
+
+
+def test_dead_last_fallback_does_not_hide_the_real_quota_problem(monkeypatch):
+    """Regression: 429, 429, then a 404 from a retired model used to be reported as 'model not found'."""
+    tried = []
+    quota = errors.ClientError(429, {"error": {"message": "quota", "status": "RESOURCE_EXHAUSTED"}})
+    gone = errors.ClientError(404, {"error": {"message": "no longer available to new users", "status": "NOT_FOUND"}})
+    monkeypatch.setattr(gemini, "FALLBACK_MODELS", ["m-b", "m-dead"])
+    monkeypatch.setattr(gemini, "MODEL", "m-a")
+
+    async def call(model, *a, **k):
+        tried.append(model)
+        raise gone if model == "m-dead" else quota
+
+    r = run_ask("Give me a hint", monkeypatch, call, problem_id="p1")
+    assert tried == ["m-a", "m-b", "m-dead"]
+    assert "rate limit" in r["degraded"] and "not available" not in r["degraded"].split("Tried:")[0]
+    assert "m-dead (unavailable (404))" in r["degraded"] and "m-a (quota/429)" in r["degraded"]  # the attempts are visible
+
+
+def test_dead_model_is_skipped_on_the_next_request(monkeypatch):
+    tried = []
+    gone = errors.ClientError(404, {"error": {"message": "gone", "status": "NOT_FOUND"}})
+    monkeypatch.setattr(gemini, "MODEL", "m-dead")
+    monkeypatch.setattr(gemini, "FALLBACK_MODELS", ["m-ok"])
+
+    async def call(model, *a, **k):
+        tried.append(model)
+        if model == "m-dead":
+            raise gone
+        return json.dumps({"answer": "ok [S1]", "claims": [], "confidence": "low", "missing": [], "needs_clarification": False}), {}
+
+    run_ask("Why did my latest submission fail?", monkeypatch, call, problem_id="p1")
+    run_ask("Why did my latest submission fail?", monkeypatch, call, problem_id="p1")
+    assert tried == ["m-dead", "m-ok", "m-ok"]  # the retired model was only probed once

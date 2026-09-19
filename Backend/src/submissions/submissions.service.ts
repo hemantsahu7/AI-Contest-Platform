@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/types/auth-user';
 import { canInspectSubmissions } from '../common/utils/access';
+import { classifyRuntimeSignal } from '../common/utils/runtime-signal';
 import { ContestsService } from '../contests/contests.service';
 import { JudgeService } from '../judge/judge.service';
 import { CreateSubmissionDto } from './dto/create-submission.dto';
@@ -179,6 +180,11 @@ export class SubmissionsService {
       compilerOutput:
         includeSource && submission.verdict === 'COMPILATION_ERROR'
           ? submission.executions?.[0]?.stderr?.slice(0, 2000)
+          : undefined,
+      // Crash kind only (fixed vocabulary). Raw runtime stdout/stderr stay staff-only: they can echo hidden-test data.
+      runtimeSignal:
+        includeSource && submission.verdict === 'RUNTIME_ERROR'
+          ? classifyRuntimeSignal(submission.executions?.[0]?.stderr)
           : undefined,
       executions: submission.executions?.map((e) => ({
         id: e.id,

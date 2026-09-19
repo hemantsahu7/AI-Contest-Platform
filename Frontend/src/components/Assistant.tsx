@@ -99,7 +99,9 @@ function Answer({ a }: { a: AiAnswer }) {
                 <li key={e.id} className="text-xs bg-slate-50 rounded p-1.5">
                   <span className="font-mono font-semibold">{e.id}</span> {e.title} <span className="text-slate-400">({e.kind}{e.updated ? `, updated ${e.updated.slice(0, 10)}` : ''})</span>
                   {e.stale && <span className="ml-1 text-amber-700 font-semibold">may be outdated</span>}
-                  <div className="text-slate-600 whitespace-pre-wrap break-words">{e.text.slice(0, 500)}</div>
+                  {e.kind === 'source'
+                    ? <pre className="mt-1 bg-slate-900 text-slate-100 rounded p-2 overflow-x-auto max-h-64">{e.text}</pre>
+                    : <div className="text-slate-600 whitespace-pre-wrap break-words">{e.text.slice(0, 500)}</div>}
                   <div className="font-mono text-slate-400">{e.ref}</div>
                 </li>
               ))}

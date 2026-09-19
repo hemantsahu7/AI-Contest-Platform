@@ -27,6 +27,7 @@ sub, _ = submit_and_wait(l1, SUM, CE)
 check("invalid C++ -> COMPILATION_ERROR with compiler output", sub["verdict"] == "COMPILATION_ERROR" and "error" in (sub.get("compilerOutput") or ""), sub["verdict"])
 sub, _ = submit_and_wait(l1, SUM, RE)
 check("segfault -> RUNTIME_ERROR", sub["verdict"] == "RUNTIME_ERROR", sub["verdict"])
+re_id = sub["id"]
 sub, _ = submit_and_wait(l1, MUL, TLE)
 check("infinite loop -> TIME_LIMIT_EXCEEDED", sub["verdict"] == "TIME_LIMIT_EXCEEDED", sub["verdict"])
 sub, _ = submit_and_wait(l2, SUM, OVERFLOW_INT)
@@ -89,6 +90,35 @@ check("retrieval mode is reported", "retrieval" in a and a["retrieval"].split(" 
 check("multi-hop does not leak learner2's data to learner1", "learner2" not in json.dumps(a))
 s, a = ask(ins, "Which learners may share a prerequisite gap despite having different failed submissions?")
 check("instructor multi-hop answer cites relationship paths", s == 200 and any(e["kind"] == "graph-path" for e in a["evidence"]), str(a)[:300])
+
+print("== Learner AI reasons over the learner's OWN submitted code ==")
+import time as _t
+MARKER = f"E2E_OWN_CODE_{int(_t.time())}"
+INTCODE = f"#include <iostream>\n// {MARKER}\nint main(){{int a,b;std::cin>>a>>b;std::cout<<a+b<<std::endl;}}"
+sub_i, _ = submit_and_wait(l1, SUM, INTCODE)
+check("int-based solution fails the hidden overflow test (WRONG_ANSWER)", sub_i["verdict"] == "WRONG_ANSWER", sub_i["verdict"])
+s, own = call("GET", f"{API}/submissions/{sub_i['id']}", l1)
+check("learner can read their own submission's source via the API (backend owns the ownership check)", s == 200 and own.get("sourceCode") == INTCODE)
+s, own_re = call("GET", f"{API}/submissions/{re_id}", l1)
+check("crashed submission exposes only a crash kind, never raw runtime output",
+      own_re.get("runtimeSignal") in ("SEGMENTATION_FAULT", "FLOATING_POINT_EXCEPTION", "ABORTED_OR_UNCAUGHT_EXCEPTION", "KILLED", "NON_ZERO_EXIT")
+      and all(e.get("stderr") is None for e in own_re.get("executions", [])), str(own_re)[:200])
+s, a = ask(l1, "Why did my latest submission get this verdict?", problemId=SUM)
+src = [e for e in a["evidence"] if e["kind"] == "source"]
+check("AI evidence contains the learner's own line-numbered source", s == 200 and bool(src) and MARKER in src[0]["text"] and "  3| int main" in src[0]["text"], str(a)[:200])
+check("AI reasons from code + statement constraints: overflow hypothesis with a line number",
+      any(c["kind"] == "hypothesis" and "overflow" in c["text"].lower() and "Line 3" in c["text"] and "does not fit" in c["text"] for c in a["claims"]), str([c["text"][:80] for c in a["claims"]]))
+check("AI observation (judge verdict) is separate from the hypothesis and cites judge evidence",
+      any(c["kind"] == "observation" and "WRONG_ANSWER" in c["text"] and "S1" in c["evidence"] for c in a["claims"]))
+check("AI says the exact failing hidden test is unavailable", any("hidden test failed" in m for m in a["missing"]) and any("cannot tell which test failed" in c["text"] for c in a["claims"]))
+s1 = next((e["text"] for e in a["evidence"] if e["id"] == "S1"), "")
+check("history evidence is compact (counts, no raw verdict array)", "Other attempts on this problem:" in s1 and "earlier verdicts" not in s1 and len(s1) < 600, s1[:200])
+check("hidden test input never appears in the answer or evidence", "2000000000 2000000000" not in json.dumps(a))
+s, h = ask(l1, "Give me a hint without giving me the solution.", problemId=SUM)
+check("hint request about my wrong answer is answered (not refused), points at my code, gives no code block",
+      s == 200 and not h.get("refusal") and "```" not in h["answer"] and any("Line 3" in c["text"] for c in h["claims"]), str(h)[:200])
+s, r = ask(l1, "Review my latest submission.")
+check("contest-page question (no problem selected) still finds my latest submission and its code", s == 200 and any(e["kind"] == "source" for e in r["evidence"]))
 
 print(f"\n{e2e_lib.passed} passed, {e2e_lib.failed} failed")
 sys.exit(1 if e2e_lib.failed else 0)

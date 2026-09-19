@@ -10,7 +10,7 @@ import time
 log = logging.getLogger("ai.gemini")
 
 MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash,gemini-2.5-flash-lite").split(",") if m.strip()]
+FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash,gemini-3.7-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite").split(",") if m.strip()]
 EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
 TIMEOUT_S = float(os.getenv("AI_TIMEOUT_S", "20"))
 # Gemini 3.x "thinking" tokens count against this cap, so it must leave room for the JSON answer itself.
@@ -68,7 +68,7 @@ def classify(exc: Exception) -> LLMUnavailable:
     if code in (401, 403) or "API key not valid" in msg or "API_KEY_INVALID" in msg or "PERMISSION_DENIED" in msg:
         return LLMUnavailable("invalid_key", "GEMINI_API_KEY was rejected by Gemini (invalid or lacking permission)")
     if code == 404 or "NOT_FOUND" in msg:
-        return LLMUnavailable("model_not_found", "Gemini model not found")
+        return LLMUnavailable("model_not_found", "Gemini model is not available for this key")
     if code is not None and 500 <= int(code) < 600:
         return LLMUnavailable("api_error", f"Gemini service error ({code})")
     name = type(exc).__name__
@@ -128,33 +128,52 @@ def parse(text: str) -> dict:
 
 
 RETRY_NEXT_MODEL = {"model_not_found", "rate_limited", "api_error", "timeout"}  # quotas are per model on the free tier
-MAX_MODEL_ATTEMPTS = 3
+MAX_MODEL_ATTEMPTS = int(os.getenv("GEMINI_MAX_MODEL_ATTEMPTS", "4"))
 TOTAL_BUDGET_S = float(os.getenv("GEMINI_TOTAL_BUDGET_S", "45"))
+DEAD_MODEL_TTL_S = 3600
+_dead: dict[str, float] = {}  # models Google answered 404 for ("no longer available"): skipped for an hour, they never recover mid-run
+# When every attempt fails, report the most informative reason (a dead last fallback must not hide that the real problem is quota).
+_INFORMATIVE = ["rate_limited", "timeout", "api_error", "truncated", "malformed", "empty", "invalid_key", "disabled", "no_key", "model_not_found"]
+_SHORT = {"rate_limited": "quota/429", "timeout": "timeout", "api_error": "service error", "model_not_found": "unavailable (404)",
+          "truncated": "cut off", "malformed": "malformed reply", "empty": "empty reply", "invalid_key": "key rejected"}
+
+
+def _summarize(failures: list[tuple[str, LLMUnavailable]]) -> LLMUnavailable:
+    best = min((e for _, e in failures), key=lambda e: _INFORMATIVE.index(e.kind) if e.kind in _INFORMATIVE else 99)
+    tried = ", ".join(f"{m} ({_SHORT.get(e.kind, e.kind)})" for m, e in failures)
+    reason = best.reason if len(failures) == 1 else f"{best.reason}. Tried: {tried}"
+    return LLMUnavailable(best.kind, reason)
 
 
 async def generate(system: str, payload: dict, schema=None) -> tuple[dict, dict, str]:
-    """Returns (parsed_json, usage, model_used). Tries at most MAX_MODEL_ATTEMPTS models within TOTAL_BUDGET_S.
+    """Returns (parsed_json, usage, model_used). Tries at most MAX_MODEL_ATTEMPTS live models within TOTAL_BUDGET_S.
     Never retries invalid-key / empty / malformed replies (those would not improve). Raises LLMUnavailable."""
     if disabled():
         raise LLMUnavailable("disabled", "the model is switched off (AI_MODEL_DISABLED)")
     if not configured():
         raise LLMUnavailable("no_key", "GEMINI_API_KEY is not set")
     user_text = json.dumps(payload, ensure_ascii=False)
-    models = ([MODEL] + [m for m in FALLBACK_MODELS if m != MODEL])[:MAX_MODEL_ATTEMPTS]
-    deadline = time.monotonic() + TOTAL_BUDGET_S
-    last: LLMUnavailable | None = None
-    for i, model in enumerate(models):
+    now = time.monotonic()
+    candidates = [MODEL] + [m for m in FALLBACK_MODELS if m != MODEL]
+    models = [m for m in candidates if _dead.get(m, 0) <= now] or candidates  # if everything is marked dead, try again rather than give up
+    models = models[:MAX_MODEL_ATTEMPTS]
+    deadline = now + TOTAL_BUDGET_S
+    failures: list[tuple[str, LLMUnavailable]] = []
+    for model in models:
         try:
             text, usage = await _call(model, system, user_text, schema)
             return parse(text), usage, model
         except LLMUnavailable as e:
-            last = e
+            err = e
         except Exception as exc:
-            last = classify(exc)
-        log.warning("gemini model=%s failed kind=%s", model, last.kind)
-        if last.kind not in RETRY_NEXT_MODEL or time.monotonic() + 2 > deadline:
+            err = classify(exc)
+        failures.append((model, err))
+        log.warning("gemini model=%s failed kind=%s", model, err.kind)
+        if err.kind == "model_not_found":
+            _dead[model] = time.monotonic() + DEAD_MODEL_TTL_S
+        if err.kind not in RETRY_NEXT_MODEL or time.monotonic() + 2 > deadline:
             break
-    raise last or LLMUnavailable("api_error", "Gemini API error")
+    raise _summarize(failures)
 
 
 async def embed(texts: list[str], task_type: str, dims: int = 768) -> list[list[float]]:
