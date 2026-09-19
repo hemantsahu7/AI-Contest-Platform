@@ -570,4 +570,4 @@ Code and design were AI-assisted (Claude Code). Verification was by execution, n
 
 ## Time spent
 
-Approximate implementation/evaluation time: **[FILL IN - exact human hours]**. (Stage 1 backend was pre-existing; the frontend, AI service, Gemini/pgvector work, security fixes and evaluation tooling were built in AI-assisted working sessions; the author must enter the real time.)
+Approximate total implementation and evaluation time: **22 hours** (author-reported). This covers the backend, Docker judge, frontend, AI service (Gemini integration, pgvector retrieval, multi-hop evidence), security fixes, the evaluation tooling and the documentation. The work was AI-assisted (see "How AI-assisted code and design were verified").
