@@ -28,13 +28,13 @@ services:
   judge-image:
     image: shodh-judge:v1
     build:
-      context: ./docker/judge
+      context: ./Backend/docker/judge
       dockerfile: Dockerfile
     command: ["true"]
 
   backend:
     build:
-      context: .
+      context: ./Backend
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
@@ -60,6 +60,30 @@ services:
         condition: service_healthy
       judge-image:
         condition: service_completed_successfully
+
+  ai:
+    build:
+      context: ./ai
+    ports:
+      - "8000:8000"
+    environment:
+      BACKEND_URL: http://backend:3000
+      # Optional: without a key the assistant runs in evidence-only fallback mode.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-haiku-4-5-20251001}
+      AI_TIMEOUT_S: ${AI_TIMEOUT_S:-20}
+      AI_RATE_LIMIT_PER_HOUR: ${AI_RATE_LIMIT_PER_HOUR:-30}
+    depends_on:
+      - backend
+
+  frontend:
+    build:
+      context: ./Frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+      - ai
 
 volumes:
   postgres_data:

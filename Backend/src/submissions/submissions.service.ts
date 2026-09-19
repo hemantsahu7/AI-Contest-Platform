@@ -175,6 +175,11 @@ export class SubmissionsService {
       completedAt: submission.completedAt,
       problem: submission.problem,
       sourceCode: includeSource ? submission.sourceCode : undefined,
+      // Compiler output only concerns the submitter's own source, so it is safe to show them.
+      compilerOutput:
+        includeSource && submission.verdict === 'COMPILATION_ERROR'
+          ? submission.executions?.[0]?.stderr?.slice(0, 2000)
+          : undefined,
       executions: submission.executions?.map((e) => ({
         id: e.id,
         status: e.status,

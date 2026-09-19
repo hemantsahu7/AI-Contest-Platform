@@ -137,7 +137,7 @@ async function main() {
       tests: [
         { input: '1 2\n', expectedOutput: '3\n', isHidden: false },
         { input: '10 20\n', expectedOutput: '30\n', isHidden: false },
-        { input: '1000000000 1000000000\n', expectedOutput: '2000000000\n', isHidden: true },
+        { input: '2000000000 2000000000\n', expectedOutput: '4000000000\n', isHidden: true },
         { input: '-5 8\n', expectedOutput: '3\n', isHidden: true },
       ],
     },
