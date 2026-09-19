@@ -23,6 +23,7 @@ class Material:
     superseded_by: str | None
     body: str
     tokens: list[str] = field(default_factory=list)
+    concepts: list[str] = field(default_factory=list)
 
 
 def load_materials(directory: Path = MATERIALS_DIR) -> list[Material]:
@@ -45,6 +46,7 @@ def load_materials(directory: Path = MATERIALS_DIR) -> list[Material]:
             status=meta.get("status", "current"),
             superseded_by=meta.get("superseded_by"),
             body=body.strip(),
+            concepts=meta.get("concepts", "").split(),
         )
         m.tokens = tokenize(m.title + " " + " ".join(m.tags) * 2 + " " + m.body)
         docs.append(m)
@@ -92,7 +94,9 @@ class MaterialIndex:
 def _tok_match(q: str, t: str) -> bool:
     if q == t:
         return True
-    if len(q) >= 3 and (t.startswith(q) or q.startswith(t)):
+    if len(q) >= 3 and t.startswith(q):  # an abbreviation of the title word: "max" -> "maximum"
+        return True
+    if len(q) >= 4 and len(t) >= 3 and q in (t + "s", t + "es"):  # plural of the title word
         return True
     return len(q) >= 4 and SequenceMatcher(None, q, t).ratio() >= 0.85
 

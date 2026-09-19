@@ -20,14 +20,22 @@ export const SEED_IDS = {
   problemDiff: '44444444-4444-4444-8444-444444444443',
   problemMul: '44444444-4444-4444-8444-444444444444',
   endedProblem: '44444444-4444-4444-8444-444444444449',
+  problemDigits: '44444444-4444-4444-8444-444444444445',
+  problemAPlusB: '44444444-4444-4444-8444-444444444446',
   judgeVersion: '55555555-5555-4555-8555-555555555551',
+  judgeVersion2: '55555555-5555-4555-8555-555555555552',
   submissionLearner1Sum: '66666666-6666-4666-8666-666666666661',
   submissionLearner1Max: '66666666-6666-4666-8666-666666666662',
   submissionLearner2Sum: '66666666-6666-4666-8666-666666666663',
+  submissionLearner2SumV2: '66666666-6666-4666-8666-666666666664',
+  submissionLearner2ProductOld: '66666666-6666-4666-8666-666666666665',
+  incidentV2: '77777777-7777-4777-8777-777777777771',
   submissionInfra: '66666666-6666-4666-8666-666666666669',
 };
 
 const PASSWORD = 'Password123!';
+const BASE_UPDATED = new Date('2019-12-31T00:00:00.000Z');
+const PRODUCT_REVISED = new Date('2020-06-01T00:00:00.000Z');
 
 const SUM_AC = `#include <iostream>
 int main() {
@@ -196,6 +204,7 @@ async function main() {
         description: p.description,
         points: p.points,
         timeLimitMs: p.timeLimitMs,
+        updatedAt: p.id === SEED_IDS.problemMul ? PRODUCT_REVISED : BASE_UPDATED,
       },
       create: {
         id: p.id,
@@ -208,6 +217,7 @@ async function main() {
         memoryLimitMb: p.memoryLimitMb,
         inputFormat: p.inputFormat,
         outputFormat: p.outputFormat,
+        updatedAt: p.id === SEED_IDS.problemMul ? PRODUCT_REVISED : BASE_UPDATED,
       },
     });
     await prisma.testCase.deleteMany({ where: { problemId: p.id } });
@@ -232,6 +242,53 @@ async function main() {
       outputFormat: 'Sum',
     },
   });
+  // Archive problems with similar / duplicate names: "Sum of Digits" is a different task with a similar title; "A + B" is a
+  // duplicate of "Sum of Two Numbers" under another name (identical statement).
+  const archiveExtra = [
+    {
+      id: SEED_IDS.problemDigits,
+      title: 'Sum of Digits',
+      description: 'Read a non-negative integer N and print the sum of its decimal digits. Constraints: 0 <= N <= 1000000000000000000.',
+      inputFormat: 'One integer N.',
+      outputFormat: 'The digit sum of N.',
+      tests: [
+        { input: '123\n', expectedOutput: '6\n', isHidden: false },
+        { input: '999999999999999999\n', expectedOutput: '162\n', isHidden: true },
+      ],
+    },
+    {
+      id: SEED_IDS.problemAPlusB,
+      title: 'A + B',
+      description: 'Read two integers A and B and print A+B. Constraints: -5000000000 <= A, B <= 5000000000.',
+      inputFormat: 'Two integers A and B.',
+      outputFormat: 'A single integer, A+B.',
+      tests: [
+        { input: '1 2\n', expectedOutput: '3\n', isHidden: false },
+        { input: '4000000000 4000000000\n', expectedOutput: '8000000000\n', isHidden: true },
+      ],
+    },
+  ];
+  for (const p of archiveExtra) {
+    await prisma.problem.upsert({
+      where: { id: p.id },
+      update: { title: p.title, description: p.description, updatedAt: BASE_UPDATED },
+      create: {
+        id: p.id,
+        contestId: SEED_IDS.contestEnded,
+        title: p.title,
+        description: p.description,
+        difficulty: Difficulty.EASY,
+        points: 50,
+        timeLimitMs: 1000,
+        memoryLimitMb: 64,
+        inputFormat: p.inputFormat,
+        outputFormat: p.outputFormat,
+        updatedAt: BASE_UPDATED,
+      },
+    });
+    await prisma.testCase.deleteMany({ where: { problemId: p.id } });
+    await prisma.testCase.createMany({ data: p.tests.map((t) => ({ ...t, problemId: p.id })) });
+  }
   await prisma.contestParticipant.upsert({
     where: {
       contestId_userId: { contestId: SEED_IDS.contestEnded, userId: SEED_IDS.learner1 },
@@ -242,14 +299,26 @@ async function main() {
 
   await prisma.judgeVersion.upsert({
     where: { version: 'judge-v1' },
-    update: { description: 'Deterministic C++ g++ judge' },
+    update: { description: 'Deterministic C++ g++ judge', createdAt: new Date('2020-01-01T00:00:00.000Z') },
     create: {
       id: SEED_IDS.judgeVersion,
       version: 'judge-v1',
+      createdAt: new Date('2020-01-01T00:00:00.000Z'),
       description: 'Deterministic C++ g++ judge. AI never influences verdicts or scores.',
     },
   });
+  await prisma.judgeVersion.upsert({
+    where: { version: 'judge-v2' },
+    update: { description: 'Output comparison changed to exact byte match (suspected regression: trailing whitespace / newline handling).' },
+    create: {
+      id: SEED_IDS.judgeVersion2,
+      version: 'judge-v2',
+      description: 'Output comparison changed to exact byte match (suspected regression: trailing whitespace / newline handling).',
+      createdAt: new Date('2020-02-01T00:00:00.000Z'),
+    },
+  });
   const judgeVersion = await prisma.judgeVersion.findUniqueOrThrow({ where: { version: 'judge-v1' } });
+  const judgeVersion2 = await prisma.judgeVersion.findUniqueOrThrow({ where: { version: 'judge-v2' } });
 
   for (const userId of [SEED_IDS.learner1, SEED_IDS.learner2]) {
     await prisma.contestParticipant.upsert({
@@ -264,6 +333,8 @@ async function main() {
     SEED_IDS.submissionLearner1Max,
     SEED_IDS.submissionLearner2Sum,
     SEED_IDS.submissionInfra,
+    SEED_IDS.submissionLearner2SumV2,
+    SEED_IDS.submissionLearner2ProductOld,
   ];
   await prisma.judgeIncident.deleteMany({ where: { submissionId: { in: historicalIds } } });
   await prisma.judgeExecution.deleteMany({ where: { submissionId: { in: historicalIds } } });
@@ -328,6 +399,80 @@ async function main() {
       },
     });
   }
+
+  // Conflicting evidence: the SAME source that judge-v1 accepted (learner2, Sum, above) is rejected under judge-v2.
+  await prisma.submission.create({
+    data: {
+      id: SEED_IDS.submissionLearner2SumV2,
+      contestId: SEED_IDS.contestOpen,
+      problemId: SEED_IDS.problemSum,
+      userId: SEED_IDS.learner2,
+      sourceCode: SUM_AC,
+      language: 'cpp',
+      status: SubmissionStatus.COMPLETED,
+      verdict: Verdict.WRONG_ANSWER,
+      score: 0,
+      submittedAt: new Date('2020-02-01T10:00:00.000Z'),
+      completedAt: new Date('2020-02-01T10:00:06.000Z'),
+    },
+  });
+  const v2Execution = await prisma.judgeExecution.create({
+    data: {
+      submissionId: SEED_IDS.submissionLearner2SumV2,
+      judgeVersionId: judgeVersion2.id,
+      startedAt: new Date('2020-02-01T10:00:00.000Z'),
+      finishedAt: new Date('2020-02-01T10:00:06.000Z'),
+      status: JudgeExecutionStatus.COMPLETED,
+      verdict: Verdict.WRONG_ANSWER,
+      executionTimeMs: 21,
+      memoryUsedMb: 64,
+      testsPassed: 0,
+      testsTotal: 4,
+      stdout: 'ok',
+    },
+  });
+  await prisma.judgeIncident.create({
+    data: {
+      id: SEED_IDS.incidentV2,
+      submissionId: SEED_IDS.submissionLearner2SumV2,
+      judgeExecutionId: v2Execution.id,
+      type: IncidentType.UNKNOWN,
+      message: 'Suspected regression in judge-v2 output comparison: source identical to an earlier accepted submission was rejected.',
+      createdAt: new Date('2020-02-01T11:00:00.000Z'),
+    },
+  });
+
+  // Stale evidence: this wrong answer predates the later revision of the Product statement (updatedAt 2020-06-01).
+  await prisma.submission.create({
+    data: {
+      id: SEED_IDS.submissionLearner2ProductOld,
+      contestId: SEED_IDS.contestOpen,
+      problemId: SEED_IDS.problemMul,
+      userId: SEED_IDS.learner2,
+      sourceCode: '#include <iostream>\nint main(){ long long a,b; std::cin>>a>>b; std::cout<<a+b; }\n',
+      language: 'cpp',
+      status: SubmissionStatus.COMPLETED,
+      verdict: Verdict.WRONG_ANSWER,
+      score: 0,
+      submittedAt: new Date('2020-03-01T09:00:00.000Z'),
+      completedAt: new Date('2020-03-01T09:00:05.000Z'),
+    },
+  });
+  await prisma.judgeExecution.create({
+    data: {
+      submissionId: SEED_IDS.submissionLearner2ProductOld,
+      judgeVersionId: judgeVersion.id,
+      startedAt: new Date('2020-03-01T09:00:00.000Z'),
+      finishedAt: new Date('2020-03-01T09:00:05.000Z'),
+      status: JudgeExecutionStatus.COMPLETED,
+      verdict: Verdict.WRONG_ANSWER,
+      executionTimeMs: 18,
+      memoryUsedMb: 64,
+      testsPassed: 0,
+      testsTotal: 2,
+      stdout: 'wrong',
+    },
+  });
 
   await prisma.submission.create({
     data: {

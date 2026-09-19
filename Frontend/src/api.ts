@@ -13,11 +13,13 @@ export type Submission = {
   sourceCode?: string; compilerOutput?: string; executions?: Execution[];
 };
 export type LeaderRow = { rank: number; username: string; score: number; solved: number; totalSolveTimeSeconds: number };
-export type Evidence = { id: string; kind: string; title: string; text: string; ref: string; updated?: string; stale?: boolean };
+export type Evidence = { id: string; kind: string; title: string; text: string; ref: string; updated?: string; stale?: boolean; via?: string };
+export type AgentStep = { step: number; tool: string; args: Record<string, string | number | boolean>; why: string; planner: string; status: string; summary: string; ms: number; evidence: string[] };
+export type AgentTrace = { planner: string; maxSteps: number; steps: AgentStep[]; stopReason: string };
 export type Claim = { text: string; kind: 'observation' | 'hypothesis'; evidence: string[] };
 export type AiAnswer = {
   answer: string; claims: Claim[]; confidence: string; missing: string[]; needs_clarification: boolean; evidence: Evidence[];
-  source: 'llm' | 'fallback' | 'policy'; model?: string; retrieval?: string; degraded?: string; refusal?: string; requestId: string; mode: string; policy: string; timingMs: number;
+  source: 'llm' | 'fallback' | 'policy'; model?: string; retrieval?: string; agent?: AgentTrace; degraded?: string; refusal?: string; requestId: string; mode: string; policy: string; timingMs: number;
 };
 
 const TOKEN_KEY = 'shodh.token';

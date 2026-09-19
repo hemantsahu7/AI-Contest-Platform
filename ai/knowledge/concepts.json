@@ -1,0 +1,291 @@
+{
+  "version": "2026-09-19",
+  "note": "Authoring format for the concept taxonomy. Ingested into PostgreSQL (ai_concepts, ai_concept_prereqs, ai_entity_aliases) and projected into Neo4j. 'requires' lists prerequisite concept ids; 'keywords' are matched against problem statements to tag problems with concepts (whole words, or substrings for symbols such as a+b).",
+  "concepts": [
+    {
+      "id": "integer-types",
+      "name": "Integer types and ranges",
+      "description": "Fixed-width integer types (int, long long) and the ranges they can represent.",
+      "keywords": [
+        "long long",
+        "32-bit",
+        "64-bit",
+        "int64",
+        "unsigned"
+      ],
+      "aliases": [
+        "int vs long long",
+        "fixed width integers",
+        "data types",
+        "number ranges"
+      ],
+      "requires": []
+    },
+    {
+      "id": "integer-overflow",
+      "name": "Integer overflow",
+      "description": "Results that do not fit the chosen integer type silently wrap around.",
+      "keywords": [
+        "overflow",
+        "wrap",
+        "wraparound",
+        "huge",
+        "big numbers"
+      ],
+      "aliases": [
+        "int overflow",
+        "arithmetic overflow",
+        "overflowing ints",
+        "wrap around",
+        "wraparound",
+        "numbers too big"
+      ],
+      "requires": [
+        "integer-types"
+      ]
+    },
+    {
+      "id": "arithmetic-operations",
+      "name": "Basic arithmetic",
+      "description": "Sums, differences and products of integer inputs.",
+      "keywords": [
+        "sum",
+        "add",
+        "product",
+        "multiply",
+        "difference",
+        "subtract",
+        "a+b",
+        "a*b",
+        "a-b"
+      ],
+      "aliases": [
+        "basic math",
+        "arithmetic"
+      ],
+      "requires": []
+    },
+    {
+      "id": "comparison-logic",
+      "name": "Comparison and conditionals",
+      "description": "Choosing between values with comparisons and if/else.",
+      "keywords": [
+        "larger",
+        "smaller",
+        "maximum",
+        "minimum",
+        "greater",
+        "compare",
+        "max",
+        "min"
+      ],
+      "aliases": [
+        "conditionals",
+        "if else",
+        "comparisons"
+      ],
+      "requires": []
+    },
+    {
+      "id": "absolute-value",
+      "name": "Absolute value and sign handling",
+      "description": "Distance between numbers regardless of sign or order.",
+      "keywords": [
+        "absolute",
+        "|a-b|",
+        "abs",
+        "distance"
+      ],
+      "aliases": [
+        "abs value",
+        "modulus of a number"
+      ],
+      "requires": [
+        "comparison-logic"
+      ]
+    },
+    {
+      "id": "input-output",
+      "name": "Input and output formatting",
+      "description": "Reading the input exactly as specified and printing only the required output.",
+      "keywords": [
+        "input format",
+        "output format",
+        "cin",
+        "cout",
+        "scanf",
+        "printf"
+      ],
+      "aliases": [
+        "io",
+        "i/o",
+        "reading input",
+        "printing output",
+        "cin cout"
+      ],
+      "requires": []
+    },
+    {
+      "id": "edge-cases",
+      "name": "Edge cases and boundary values",
+      "description": "Negative numbers, zero, equal values and limit values that expose wrong assumptions.",
+      "keywords": [
+        "edge",
+        "boundary",
+        "corner"
+      ],
+      "aliases": [
+        "corner cases",
+        "boundary cases",
+        "special cases"
+      ],
+      "requires": [
+        "input-output"
+      ]
+    },
+    {
+      "id": "compilation",
+      "name": "Compilation and syntax",
+      "description": "Compiler errors from syntax mistakes, missing headers or undeclared names.",
+      "keywords": [
+        "compile",
+        "compiler",
+        "syntax",
+        "semicolon",
+        "header"
+      ],
+      "aliases": [
+        "compile errors",
+        "syntax errors"
+      ],
+      "requires": []
+    },
+    {
+      "id": "memory-and-indexing",
+      "name": "Arrays, pointers and indexing",
+      "description": "Valid indexes and pointers: out-of-bounds and null accesses crash programs.",
+      "keywords": [
+        "array",
+        "pointer",
+        "index",
+        "bounds",
+        "null"
+      ],
+      "aliases": [
+        "out of bounds",
+        "null pointers",
+        "arrays"
+      ],
+      "requires": []
+    },
+    {
+      "id": "runtime-errors",
+      "name": "Runtime errors",
+      "description": "Crashes and non-zero exits while the program runs.",
+      "keywords": [
+        "crash",
+        "segfault",
+        "segmentation",
+        "exit code",
+        "division by zero",
+        "runtime"
+      ],
+      "aliases": [
+        "crashes",
+        "segmentation fault",
+        "runtime error"
+      ],
+      "requires": [
+        "memory-and-indexing"
+      ]
+    },
+    {
+      "id": "loops",
+      "name": "Loops and termination",
+      "description": "Loop conditions and making sure a loop terminates.",
+      "keywords": [
+        "while",
+        "loop",
+        "loops",
+        "iterate",
+        "terminate",
+        "infinite"
+      ],
+      "aliases": [
+        "while loops",
+        "for loops",
+        "infinite loops"
+      ],
+      "requires": []
+    },
+    {
+      "id": "time-complexity",
+      "name": "Time complexity",
+      "description": "Estimating running time against the time limit.",
+      "keywords": [
+        "complexity",
+        "time limit",
+        "timeout",
+        "slow",
+        "efficient"
+      ],
+      "aliases": [
+        "big o",
+        "performance",
+        "time limit exceeded",
+        "tle"
+      ],
+      "requires": [
+        "loops"
+      ]
+    },
+    {
+      "id": "judge-behavior",
+      "name": "How the judge reports results",
+      "description": "Verdicts, infrastructure errors and judge versions.",
+      "keywords": [
+        "judge",
+        "infrastructure",
+        "incident",
+        "verdict"
+      ],
+      "aliases": [
+        "judge errors",
+        "infrastructure errors",
+        "judge versions"
+      ],
+      "requires": []
+    }
+  ],
+  "material_concepts": {
+    "cpp-input-output": [
+      "input-output"
+    ],
+    "legacy-cpp-io": [
+      "input-output"
+    ],
+    "integer-overflow": [
+      "integer-overflow",
+      "integer-types"
+    ],
+    "edge-cases-wrong-answer": [
+      "edge-cases",
+      "comparison-logic",
+      "absolute-value"
+    ],
+    "compilation-errors": [
+      "compilation"
+    ],
+    "runtime-errors": [
+      "runtime-errors",
+      "memory-and-indexing"
+    ],
+    "time-limit": [
+      "time-complexity",
+      "loops"
+    ],
+    "judge-infrastructure": [
+      "judge-behavior"
+    ]
+  }
+}

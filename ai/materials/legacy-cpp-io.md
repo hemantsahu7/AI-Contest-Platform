@@ -2,6 +2,7 @@
 title: Legacy advice - always use scanf and printf
 tags: input output scanf printf cin cout
 updated: 2019-03-10
+concepts: input-output
 status: deprecated
 superseded_by: cpp-input-output
 ---

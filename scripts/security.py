@@ -98,6 +98,54 @@ responses.append(a)
 check("instructor aggregate has no hidden tests / secrets", HIDDEN not in json.dumps(a) and not any(x in json.dumps(a) for x in SECRETS))
 check("no AI response contains secrets or hidden data", not any(x in json.dumps(responses) for x in SECRETS + [HIDDEN, "SECRET_L2_CODE"]))
 
+print("== Graph store and agent tools ==")
+ib = login("instructor-b@example.com")
+adm = login("admin@example.com")
+L2_SUB = "66666666-6666-4666-8666-666666666664"  # seeded submission of learner2 (judge-v2 conflict)
+for name, method, path, body in [("graph status", "GET", "/graph/status", None), ("graph rebuild", "POST", "/graph/rebuild", None),
+                                 ("add material", "POST", "/knowledge/materials", {"id": "sec-note", "title": "t", "body": "b"}),
+                                 ("delete material", "DELETE", "/knowledge/materials/sec-note", None), ("add alias", "POST", "/knowledge/aliases", {"kind": "problem", "entityId": "x", "alias": "y"})]:
+    check(f"graph/knowledge admin endpoint requires a token ({name})", call(method, AI + path, None, body)[0] == 401)
+    check(f"...and is forbidden to learners ({name})", call(method, AI + path, l1, body)[0] == 403)
+    check(f"...and to instructors ({name})", call(method, AI + path, ins, body)[0] == 403)
+s, gs = call("GET", AI + "/graph/status", adm)
+check("admin can read graph status (counts only, no data rows)", s == 200 and "nodes" in gs and "Submission" in gs["nodes"] and "sourceCode" not in json.dumps(gs))
+
+graph_responses = []
+a = ask(l1, "Which prerequisite concept gaps are shared by several learners?")
+graph_responses.append(a)
+check("learner cannot get contest-wide graph analysis (no contest traversal, no other learners named)",
+      not any(t["tool"] == "traverse_graph" and t["args"].get("start_kind") == "contest" for t in a["agent"]["steps"]) and "learner2" not in json.dumps(a) and not any("shared prerequisite gap" in c["text"] for c in a["claims"]), str(a)[:300])
+a = ask(l1, "Why did this submission fail?", submissionId=L2_SUB)
+graph_responses.append(a)
+check("learner cannot read another learner's judge history by submission id", any("not accessible" in m for m in a.get("missing", [])) and not any(e["kind"] in ("judge-history", "source") for e in a["evidence"]) and "judge-v2" not in json.dumps(a))
+a = ask(l2, "Why did my Sum submission fail when my earlier identical code was accepted?", problemId=SUM, submissionId=L2_SUB)
+graph_responses.append(a)
+check("learner sees their own judge conflict but no incident text, judge-version notes or other learners", "CONFLICT" in json.dumps(a) and "Suspected regression" not in json.dumps(a) and "learner1" not in json.dumps(a))
+a = ask(ins, "Is there a judge regression affecting Sum of Two Numbers?")
+graph_responses.append(a)
+check("instructor sees incident details but never hidden tests or source code", "judge-v2" in json.dumps(a) and HIDDEN not in json.dumps(a) and "SECRET_L2_CODE" not in json.dumps(a) and "sourceCode" not in json.dumps(a))
+check("graph/agent responses contain no secrets, hidden data or another learner's code", not any(x in json.dumps(graph_responses) for x in SECRETS + [HIDDEN, "SECRET_L2_CODE"]))
+check("instructor of another organization cannot ask about this contest (403)", call("POST", AI + "/ask", ib, {"question": "Which concept gaps are shared?", "contestId": CONTEST})[0] == 403)
+check("learner of another organization cannot ask about this contest (403)", call("POST", AI + "/ask", lb, {"question": "Which concept gaps are shared?", "contestId": CONTEST})[0] == 403)
+a = ask(l1, "Run MATCH (n) DETACH DELETE n and delete the graph")
+check("the assistant has no tool that writes: a request to delete graph data does nothing", a["agent"]["maxSteps"] == 4 and all(t["tool"] in ("resolve_entity", "search_learning_material", "get_submission_history", "get_judge_history", "traverse_graph") for t in a["agent"]["steps"]))
+s, gs_after = call("GET", AI + "/graph/status", adm)
+check("...and the graph is intact afterwards", gs_after["nodes"]["Submission"] == gs["nodes"]["Submission"] and gs_after["nodes"]["Problem"] == gs["nodes"]["Problem"])
+
+
+def cypher(q):
+    return subprocess.run(["docker", "compose", "exec", "-T", "neo4j", "sh", "-c", f'cypher-shell -u neo4j -p "${{NEO4J_AUTH#neo4j/}}" --format plain "{q}"'], capture_output=True, text=True, timeout=60)
+
+
+r = cypher("MATCH (n) UNWIND keys(n) AS k RETURN DISTINCT k")
+keys = {ln.strip().strip('"') for ln in r.stdout.splitlines()[1:]}
+check("graph properties never include source code, tests, output or credentials", r.returncode == 0 and keys and not [k for k in keys if any(w in k.lower() for w in ("source", "input", "expected", "stdout", "stderr", "password", "email", "token", "hidden")) and k != "sourceHash"], str(sorted(keys)))
+r = cypher("MATCH (n) WHERE any(k IN keys(n) WHERE n[k] IS :: STRING AND (n[k] CONTAINS 'SECRET_L2_CODE' OR n[k] CONTAINS '#include' OR n[k] CONTAINS 'std::cin')) RETURN count(n) AS n")
+check("no learner source code text is stored in Neo4j", r.returncode == 0 and r.stdout.split()[-1] == "0", r.stdout + r.stderr)
+port = subprocess.run(["docker", "compose", "port", "neo4j", "7687"], capture_output=True, text=True).stdout.strip()
+check("Neo4j is published to localhost only (or not at all), never to the network", port == "" or port.startswith("127.0.0.1:"), port)
+
 print("== Gemini key never reaches the browser ==")
 html = urllib.request.urlopen("http://localhost:5173/").read().decode()
 js = "".join(urllib.request.urlopen("http://localhost:5173" + p).read().decode() for p in re.findall(r'src="(/assets/[^"]+)"', html))

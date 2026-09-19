@@ -1,0 +1,39 @@
+{
+  "note": "Alternative / old names for entities, keyed by their PostgreSQL id. Stored in ai_entity_aliases and used by entity resolution. Problem ids are the seeded UUIDs; aliases for unseen problems can be added with POST /ai/knowledge/aliases.",
+  "problems": {
+    "44444444-4444-4444-8444-444444444441": [
+      "Add Two Numbers",
+      "A plus B",
+      "two number sum"
+    ],
+    "44444444-4444-4444-8444-444444444442": [
+      "Larger of Two",
+      "max of two"
+    ],
+    "44444444-4444-4444-8444-444444444443": [
+      "Abs Difference",
+      "absolute diff"
+    ],
+    "44444444-4444-4444-8444-444444444444": [
+      "Multiply Two Numbers",
+      "A times B"
+    ]
+  },
+  "materials": {
+    "cpp-input-output": [
+      "cin cout guide",
+      "IO in C++",
+      "Reading input and printing output"
+    ],
+    "legacy-cpp-io": [
+      "scanf printf guide",
+      "old IO guide",
+      "legacy C++ I/O",
+      "legacy C++ input output advice"
+    ],
+    "integer-overflow": [
+      "int overflow note",
+      "choosing the right integer type"
+    ]
+  }
+}

@@ -122,5 +122,78 @@ check("hint request about my wrong answer is answered (not refused), points at m
 s, r = ask(l1, "Review my latest submission.")
 check("contest-page question (no problem selected) still finds my latest submission and its code", s == 200 and any(e["kind"] == "source" for e in r["evidence"]))
 
+print("== Stage 3: Neo4j knowledge graph, GraphRAG and the bounded agent ==")
+adm = login("admin@example.com")
+JV2_WA = "66666666-6666-4666-8666-666666666664"  # seeded: identical source ACCEPTED under judge-v1, WRONG_ANSWER under judge-v2
+PRODUCT_OLD = "66666666-6666-4666-8666-666666666665"  # seeded: judged before the problem statement was revised
+s, h = call("GET", AI + "/health")
+check("AI health reports the graph store as ready (initialised + projected)", s == 200 and h["graph"]["configured"] and h["graph"]["status"] == "ready", str(h))
+s, gs = call("GET", AI + "/graph/status", adm)
+check("graph status (admin): nodes and relationships projected from PostgreSQL",
+      s == 200 and gs["reachable"] and {"Problem", "Concept", "LearningMaterial", "Submission", "User", "JudgeVersion"} <= set(gs["nodes"]) and {"REQUIRES", "PREREQUISITE_OF", "SIMILAR_TO", "SUPERSEDED_BY"} <= set(gs["relationships"]), str(gs)[:300])
+call("POST", AI + "/graph/rebuild", adm)  # a full rebuild first: it also prunes rows the seed/tests deleted since the last one
+s, gs = call("GET", AI + "/graph/status", adm)
+before_nodes, before_rels = gs["nodes"], gs["relationships"]
+s, rb = call("POST", AI + "/graph/rebuild", adm)
+s2, gs2 = call("GET", AI + "/graph/status", adm)
+check("rebuild from PostgreSQL is idempotent (same nodes and relationships, no duplicates)",
+      s == 200 and gs2["nodes"] == before_nodes and gs2["relationships"] == before_rels, f"{before_nodes} vs {gs2.get('nodes')}")
+s, tg = call("GET", f"{API}/contests/{CONTEST}/submissions", adm)
+check("graph holds every submission PostgreSQL returns for the contest (PostgreSQL stays the source of truth)", gs2["nodes"]["Submission"] >= len(tg), f"{gs2['nodes'].get('Submission')} vs {len(tg)}")
+
+
+def steps(a):
+    return [(t["tool"], t["status"]) for t in a["agent"]["steps"]]
+
+
+s, a = ask(l1, "How do I approach A plus B?")
+check("entity resolution: an old/alternative name resolves to the stable problem (agent step 1)",
+      s == 200 and steps(a)[0] == ("resolve_entity", "ok") and any(e["id"] == "P1" and "Sum of Two Numbers" in e["title"] for e in a["evidence"]), str(a)[:300])
+check("graph evidence: problem -> concepts -> prerequisite -> material, with the reason derived from the statement bounds",
+      any(e["kind"] == "graph" and "Integer overflow" in e["text"] and "Integer types and ranges" in e["text"] for e in a["evidence"]) and any("32-bit" in c["text"] for c in a["claims"]), str([c["text"][:80] for c in a["claims"]]))
+check("GraphRAG: retrieval mode reports what the graph contributed", "neo4j graph" in a["retrieval"], a["retrieval"])
+check("agent trace: bounded, read-only tools only", a["agent"]["maxSteps"] == 4 and len(a["agent"]["steps"]) <= 4 and {t for t, _ in steps(a)} <= {"resolve_entity", "search_learning_material", "get_submission_history", "get_judge_history", "traverse_graph"}, str(a["agent"]))
+check("conclusions drawn from graph paths are hypotheses; recorded relationships are cited observations",
+      all(c["evidence"] for c in a["claims"] if c["kind"] == "observation") and any(c["kind"] == "hypothesis" and "prerequisite" in c["text"] for c in a["claims"]))
+s, a = ask(l1, "Is there another problem similar to Sum of Two Numbers that I could mix it up with?")
+check("similar/duplicate names: the graph reports the archived duplicate 'A + B' with its similarity", any("'A + B'" in c["text"] and "duplicate" in c["text"] for c in a["claims"]), str([c["text"][:90] for c in a["claims"]]))
+s, a = ask(l2, "Why did my Sum submission fail when my earlier identical code was accepted?", problemId=SUM, submissionId=JV2_WA)
+txt = " ".join(c["text"] for c in a["claims"])
+check("conflicting judge evidence is reported with versions and timestamps (identical source, ACCEPTED under judge-v1, WRONG_ANSWER under judge-v2)",
+      "CONFLICT" in txt and "judge-v1" in txt and "judge-v2" in txt and "2020-01-01" in txt and "2020-02-01" in txt and "identical" in txt, txt[:400])
+check("the AI does not overrule the judge: the recorded verdict stands and a rejudge is left to an instructor", "authoritative" in txt and "rejudge" in txt and "WRONG_ANSWER" in txt)
+check("learner never sees judge incident text or judge-version notes", "Suspected regression" not in json.dumps(a) and "output comparison" not in json.dumps(a).lower())
+s, a = ask(l2, "Why did my old Product submission fail?", submissionId=PRODUCT_OLD)
+check("versioned evidence: a statement revised after the submission is flagged", any("revised at" in c["text"] and "may differ" in c["text"] for c in a["claims"]), str([c["text"][:80] for c in a["claims"]]))
+s, a = ask(l2, "Which concepts am I struggling with and what should I study first?")
+check("multi-hop (learner -> submissions -> problems -> concepts -> prerequisite -> material) through Neo4j",
+      ("traverse_graph", "ok") in steps(a) and any(e["kind"] == "graph" and "Integer types and ranges" in e["text"] for e in a["evidence"]), str(a["agent"]["steps"])[:300])
+s, a = ask(ins, "Which prerequisite concept gaps are shared by several learners?")
+gap = [c for c in a["claims"] if "shared prerequisite gap" in c["text"]]
+check("instructor: shared prerequisite gaps come from the graph and are hypotheses", bool(gap) and all(c["kind"] == "hypothesis" for c in gap) and ("traverse_graph", "ok") in steps(a), str([c["text"][:80] for c in a["claims"]]))
+s, a = ask(ins, "Is there a judge regression affecting Sum of Two Numbers?")
+check("instructor sees judge versions, incidents and the conflict", any(e["kind"] == "judge-history" and "judge-v2" in e["text"] for e in a["evidence"]), str(a)[:300])
+s, a = ask(l1, "Is the legacy C++ I/O note outdated?")
+check("stale material: deprecated note flagged and its replacement preferred", any("deprecated" in c["text"] and "prefer the newer note" in c["text"] for c in a["claims"]), str([c["text"][:80] for c in a["claims"]]))
+s, a = ask(l1, "What is the weather today?")
+check("unanswerable: no graph claims are invented", a["confidence"] == "low" and not a["claims"] and not any(e["kind"] == "graph" for e in a["evidence"]))
+
+print("-- the graph follows changes in PostgreSQL --")
+fresh, _ = submit_and_wait(l1, SUM, AC)
+s, a = ask(l1, "Why did my latest submission get this verdict?", problemId=SUM, submissionId=fresh["id"])
+jh = next((t for t in a["agent"]["steps"] if t["tool"] == "get_judge_history"), {})
+check("a submission judged seconds ago is already in the graph (the agent's judge-history step reads its judge version)",
+      jh.get("status") == "ok" and fresh["id"][:8] in jh.get("summary", "") and "judged by judge-v" in jh.get("summary", ""), str(a["agent"]["steps"])[:300])
+NOTE = "e2e-runtime-note"
+s, m = call("POST", AI + "/knowledge/materials", adm, {"id": NOTE, "title": "Flibbertigibbet overflow guidance", "body": "Flibbertigibbet: when a sum exceeds the 32-bit range use long long. Written at runtime.", "tags": ["overflow"], "concepts": ["integer-overflow"], "updated": "2026-09-19"})
+check("unseen knowledge: a material added at runtime is stored in PostgreSQL, indexed and projected", s == 200 and m.get("version", 0) >= 1 and m.get("graphProjected"), str(m))
+s, a = ask(l1, "Explain flibbertigibbet overflow guidance")
+check("...and is retrieved immediately (no restart)", any(NOTE in e["ref"] for e in a["evidence"]), str([e["ref"] for e in a["evidence"]]))
+s, gs3 = call("GET", AI + "/graph/status", adm)
+check("...and its graph node and COVERS edge exist", gs3["nodes"]["LearningMaterial"] == before_nodes["LearningMaterial"] + 1 and gs3["relationships"]["COVERS"] == before_rels["COVERS"] + 1, str(gs3["nodes"]))
+s, d = call("DELETE", f"{AI}/knowledge/materials/{NOTE}", adm)
+s, gs4 = call("GET", AI + "/graph/status", adm)
+check("removing it removes it from retrieval and from the graph again", s == 200 and gs4["nodes"]["LearningMaterial"] == before_nodes["LearningMaterial"] and gs4["relationships"]["COVERS"] == before_rels["COVERS"], str(gs4["nodes"]))
+
 print(f"\n{e2e_lib.passed} passed, {e2e_lib.failed} failed")
 sys.exit(1 if e2e_lib.failed else 0)

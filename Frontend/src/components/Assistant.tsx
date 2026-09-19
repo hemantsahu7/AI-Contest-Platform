@@ -65,6 +65,7 @@ export function Assistant({ contestId, problemId, submissionId, staff }: { conte
 
 function Answer({ a }: { a: AiAnswer }) {
   const [open, setOpen] = useState(false);
+  const [showSteps, setShowSteps] = useState(false);
   const conf = { high: 'text-green-700', medium: 'text-amber-700', low: 'text-red-700' }[a.confidence] ?? '';
   return (
     <div className="border rounded p-2 space-y-2">
@@ -99,6 +100,7 @@ function Answer({ a }: { a: AiAnswer }) {
                 <li key={e.id} className="text-xs bg-slate-50 rounded p-1.5">
                   <span className="font-mono font-semibold">{e.id}</span> {e.title} <span className="text-slate-400">({e.kind}{e.updated ? `, updated ${e.updated.slice(0, 10)}` : ''})</span>
                   {e.stale && <span className="ml-1 text-amber-700 font-semibold">may be outdated</span>}
+                  {e.via && <span className="ml-1 text-[10px] bg-indigo-50 text-indigo-700 rounded px-1">found by: {e.via}</span>}
                   {e.kind === 'source'
                     ? <pre className="mt-1 bg-slate-900 text-slate-100 rounded p-2 overflow-x-auto max-h-64">{e.text}</pre>
                     : <div className="text-slate-600 whitespace-pre-wrap break-words">{e.text.slice(0, 500)}</div>}
@@ -106,6 +108,27 @@ function Answer({ a }: { a: AiAnswer }) {
                 </li>
               ))}
             </ul>
+          )}
+        </div>
+      )}
+      {a.agent && a.agent.steps.length > 0 && (
+        <div>
+          <button className="text-xs underline text-slate-600" onClick={() => setShowSteps(!showSteps)}>
+            {showSteps ? 'Hide' : 'Show'} tool steps ({a.agent.steps.length}/{a.agent.maxSteps}, read-only)
+          </button>
+          {showSteps && (
+            <ol className="mt-1 space-y-1">
+              {a.agent.steps.map((s) => (
+                <li key={s.step} className="text-xs bg-slate-50 rounded p-1.5">
+                  <span className="font-mono font-semibold">{s.step}. {s.tool}</span>{' '}
+                  <span className={s.status === 'ok' ? 'text-green-700' : 'text-amber-700'}>{s.status}</span>{' '}
+                  <span className="text-slate-400">{s.ms} ms</span>
+                  <div className="text-slate-600">{s.why} - {s.summary}</div>
+                  {s.evidence.length > 0 && <div className="font-mono text-slate-400">evidence: {s.evidence.join(', ')}</div>}
+                </li>
+              ))}
+              <li className="text-[10px] text-slate-400">Stopped: {a.agent.stopReason} (planner: {a.agent.planner})</li>
+            </ol>
           )}
         </div>
       )}

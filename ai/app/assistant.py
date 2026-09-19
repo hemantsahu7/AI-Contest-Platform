@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from . import gemini, graph, vectors
+from . import agent, gemini, graph, tools, vectors
 from .backend import Backend, NotAccessible
 from .retrieval import MaterialIndex, load_materials, resolve_problem
 
@@ -59,9 +59,12 @@ class Ev:
     ref: str
     updated: str | None = None
     stale: bool = False
+    via: str | None = None  # how retrieval found it (text retrieval / knowledge graph)
 
     def public(self) -> dict:
         d = {"id": self.id, "kind": self.kind, "title": self.title, "text": self.text, "ref": self.ref}
+        if self.via:
+            d["via"] = self.via
         if self.updated:
             d["updated"] = self.updated
         if self.stale:
@@ -85,6 +88,8 @@ class Ctx:
     retrieval: str = "n/a"
     progress: list[dict] = field(default_factory=list)
     shared: list[dict] = field(default_factory=list)
+    facts: list[dict] = field(default_factory=list)  # claims derived by agent tools: {text, kind, ids, mats}
+    agent: "agent.AgentRun | None" = None
 
 
 # ---------- guards ----------
@@ -126,23 +131,9 @@ def _latest(subs: list[dict]) -> dict | None:
     return max(subs, key=lambda s: s["submittedAt"]) if subs else None
 
 
-INT32_MAX = 2_147_483_647
+from .problem_analysis import INT32_MAX, statement_bound as _statement_bound, worst_case as _worst_case  # noqa: E402
+
 WIDE_TYPES = r"long long|int64_t|uint64_t|__int128"
-
-
-def _statement_bound(problem: dict) -> tuple[int | None, str]:
-    """Largest magnitude the problem statement mentions (e.g. '-4000000000 <= A, B <= 4000000000', '4*10^9') and what the
-    task does with it (sum / product / value). Purely derived from the statement text the learner can already see."""
-    text = f"{problem.get('description', '')} {problem.get('inputFormat', '')}"
-    nums = [int(n.replace(",", "")) for n in re.findall(r"(?<![\w.])(\d[\d,]{4,})(?![\w.])", text)]
-    nums += [int(a) * 10 ** int(b) for a, b in re.findall(r"(\d+)\s*[x*\u00b7]\s*10\s*\^\s*(\d+)", text)]
-    nums += [10 ** int(b) for b in re.findall(r"10\s*\^\s*(\d+)", text)]
-    bound = max(nums) if nums else None
-    if re.search(r"a\s*\*\s*b|product|multipl", text, re.I):
-        return bound, "product"
-    if re.search(r"a\s*\+\s*b|\bsum\b|\badd", text, re.I):
-        return bound, "sum"
-    return bound, "value"
 
 
 def _static_checks(source: str, problem: dict) -> list[str]:
@@ -156,7 +147,7 @@ def _static_checks(source: str, problem: dict) -> list[str]:
         if bound is None:
             notes.append(f"Line {where} declares 32-bit `int` and the code uses no 64-bit type; the statement gives no bounds I can check, so an overflow on large inputs is possible but unconfirmed.")
         else:
-            worst = bound * bound if op == "product" else 2 * bound if op == "sum" else bound
+            worst = _worst_case(bound, op)
             if worst > INT32_MAX:
                 notes.append(f"Line {where} declares 32-bit `int` (max {INT32_MAX:,}) and the code uses no 64-bit type, but the statement allows values up to {bound:,}, so the worst-case {op} is about {worst:,}, which does not fit. Integer overflow is a likely cause (hypothesis: the judge does not say which test failed).")
             else:
@@ -236,6 +227,9 @@ async def gather(question: str, contest_id: str, problem_id: str | None, submiss
     ctx.problems = problems
 
     subs = await be.get(f"/contests/{contest_id}/submissions")
+    tc = tools.ToolContext(ctx, me, contest, staff, subs)
+    planner = agent.make_planner()
+    run = ctx.agent = agent.AgentRun(tc, planner.name)
     target = None
     denied = False  # an explicitly requested submission that the user may not see must not be silently replaced by another one
     if submission_id:
@@ -255,6 +249,13 @@ async def gather(question: str, contest_id: str, problem_id: str | None, submiss
         ctx.problem = next((p for p in problems if p["id"] == target["problemId"]), None)
     if not ctx.problem:
         ctx.problem, ctx.candidates = resolve_problem(question, problems)
+    if agent.enabled() and not ctx.problem and not ctx.candidates and not denied and intent_of(question) != "progress":
+        # title matching found nothing: entity resolution (aliases, typos, other contests' similar names) is the first agent step
+        await run.call("resolve_entity", {"name": question[:300]}, "no problem matched the question by title", planner.name)
+        ctx.problem = tc.resolved.get("problem")
+        ctx.candidates = tc.resolved.get("candidates") or []
+        if ctx.problem and ctx.candidates:
+            ctx.candidates = []
 
     if ctx.problem:
         _add_problem_evidence(ctx, contest_id)
@@ -316,6 +317,15 @@ async def gather(question: str, contest_id: str, problem_id: str | None, submiss
         if not ctx.problem and not ctx.candidates and intent_of(question) in ("progress", "study"):
             await add_progress_evidence(ctx, subs, contest, staff=True)
 
+    if agent.enabled():
+        await run.loop(planner)  # bounded read-only tool steps (graph traversal, judge history, expanded search)
+    if any(e.kind == "judge-history" for e in ctx.evidence):
+        ctx.missing = [m for m in ctx.missing if not m.startswith("Judge version history and per-test")]
+        ctx.missing.append("Per-test results are not exposed to this assistant: a judge change is inferred from recorded versions and verdicts only.")
+    if any(e.kind == "graph" for e in ctx.evidence):
+        ctx.missing = [m for m in ctx.missing if not m.startswith("Relationships are derived per request")]
+        if ctx.progress or ctx.shared:
+            ctx.missing.append("Attempt-history paths (G/K) are derived in memory from submissions; concept and prerequisite links (N) come from the Neo4j knowledge graph.")
     if ctx.progress or ctx.shared:
         return ctx
     boost = []
@@ -323,10 +333,14 @@ async def gather(question: str, contest_id: str, problem_id: str | None, submiss
         boost = ctx.problem["title"].split() + ctx.problem["description"].split()
     verdict = ctx.submission["verdict"] if ctx.submission else ""
     query = f"{question} {VERDICT_TOPIC.get(verdict, '')} {' '.join(b for b in boost[:12])}"
-    hits, ctx.retrieval = await hybrid_search(query, boost)
-    for i, (m, score) in enumerate(hits, 1):
+    hits, retrieval = await hybrid_search(query, boost)
+    ctx.retrieval = retrieval if not tc.searched else ctx.retrieval  # a graph-expanded search already recorded its own mode
+    fused, graph_note = tools.fuse_materials(tc, hits)
+    if graph_note:
+        ctx.retrieval = f"{ctx.retrieval} + neo4j graph ({graph_note}; reciprocal rank fusion, freshness rerank)"
+    for i, (m, via) in enumerate(fused, 1):
         note = f" (DEPRECATED - superseded by {m.superseded_by}; may be outdated)" if m.status == "deprecated" else ""
-        ctx.evidence.append(Ev(f"M{i}", "material", m.title + note, m.body, f"materials/{m.id}.md", m.updated, m.status == "deprecated"))
+        ctx.evidence.append(Ev(f"M{i}", "material", m.title + note, m.body, f"materials/{m.id}.md", m.updated, m.status == "deprecated", via if graph_note else None))
     return ctx
 
 
@@ -384,6 +398,19 @@ async def add_progress_evidence(ctx: Ctx, subs: list[dict], contest: dict, staff
     if not ctx.progress:
         ctx.missing.append("No struggling problems were found in the available submission history.")
     ctx.missing.append("Relationships are derived per request from submissions and learning material (in-memory traversal, not a stored knowledge graph).")
+
+
+async def reload_index() -> int:
+    """Rebuild the BM25 index from PostgreSQL (the source of truth for learning materials). Keeps the file-based index when the
+    table is empty or unreachable. Called at startup after ingestion and after POST /ai/knowledge/materials."""
+    global INDEX
+    from . import knowledge
+
+    docs = await knowledge.load_materials_db()
+    if docs:
+        INDEX = MaterialIndex(docs)
+        vectors.reset_state()  # re-embed new/changed notes on the next hybrid search
+    return len(docs)
 
 
 async def hybrid_search(query: str, boost_tags: list[str] | None = None, top_k: int = 3):
@@ -444,6 +471,13 @@ def fallback_answer(ctx: Ctx) -> dict:
 
     mats = [e for e in ctx.evidence if e.kind == "material" and not e.stale]
 
+    def add_facts(limit: int = 8) -> None:
+        """Claims derived by the agent tools (knowledge graph, judge history, entity resolution); each cites its own evidence."""
+        order = {"J": 0, "U": 1, "E": 2, "N": 3}  # judge conflicts and attempt history first, graph relationships after
+        for f in sorted(ctx.facts, key=lambda f: order.get((f.get("ids") or ["Z"])[0][:1], 4))[:limit]:
+            mat_ids = [e.id for m in f.get("mats", []) for e in ctx.evidence if e.ref == f"materials/{m}.md"]
+            claim(f["text"], f["kind"], list(f.get("ids", [])) + mat_ids)
+
     if ctx.mode == "instructor":
         if "A1" in ev:
             claim(ev["A1"].text, "observation", ["A1"])
@@ -454,7 +488,8 @@ def fallback_answer(ctx: Ctx) -> dict:
                 claim("No concept is shared by two or more learners' failed problems in the available history, so a shared prerequisite gap is not supported.", "hypothesis", [ctx.progress[0]["g"]])
             for sh in ctx.shared:
                 claim(f"Candidate shared prerequisite gap - '{sh['title']}': {', '.join(sh['who'])} failed problems linked to it. This is a hypothesis; the verdicts alone do not prove a shared misconception.", "hypothesis", [sh["k"], sh["mat"]])
-            if mats and not ctx.shared:
+            add_facts()
+            if mats and not ctx.shared and not ctx.facts:
                 claim(f"Related concept to check: {mats[0].title}.", "hypothesis", [mats[0].id])
             return _dict("\n".join(lines), claims, "low" if ctx.missing else "medium", ctx.missing)
         return _dict("I could not find contest evidence for this question.", [], "low", ctx.missing)
@@ -469,6 +504,7 @@ def fallback_answer(ctx: Ctx) -> dict:
                 claim("Possible pattern in your latest failing attempt: " + h, "hypothesis", [pr["g"]])
             if pr["titles"]:
                 claim(f"Study next: {', '.join(pr['titles'])}.", "hypothesis", [pr["g"]] + pr["mats"])
+        add_facts()
         return _dict("\n".join(lines), claims, "medium", ctx.missing)
 
     sub = ctx.submission
@@ -491,6 +527,7 @@ def fallback_answer(ctx: Ctx) -> dict:
             claim("I cannot tell which test failed, and hidden tests are protected, so the exact cause is unconfirmed.", "hypothesis", ["X1"])
         if v == "JUDGE_ERROR":
             claim("Resubmit the same code. If it repeats, report it to an instructor.", "hypothesis", ["S1"])
+        add_facts(9)
         if mats and v != "ACCEPTED":
             claim(f"Review next: {mats[0].title}.", "hypothesis", [mats[0].id])
         conf = "high" if v in ("COMPILATION_ERROR", "ACCEPTED", "JUDGE_ERROR") else "medium"
@@ -506,6 +543,7 @@ def fallback_answer(ctx: Ctx) -> dict:
                 claim(f"Hint 2: think about what could go wrong with the input values - see '{mats[0].title}'.", "hypothesis", [mats[0].id])
         else:
             claim(f"This problem is '{ctx.problem['title']}' ({ctx.problem['difficulty']}).", "observation", ["P1"])
+        add_facts(5)
         for m in mats[:2]:
             claim(f"Concept to review: {m.title}.", "hypothesis", [m.id])
         if sub:
@@ -515,6 +553,12 @@ def fallback_answer(ctx: Ctx) -> dict:
                     if e.kind == "static-check":
                         claim("Where to look in your code: " + e.text, "hypothesis", [e.id, "F1"])
         return _dict("\n".join(lines), claims, "medium", ctx.missing)
+
+    if ctx.facts and intent != "verdict":
+        add_facts()
+        for m in mats[:2]:
+            claim(f"Concept to review: {m.title}.", "hypothesis", [m.id])
+        return _dict("\n".join(lines), claims, "low" if ctx.missing else "medium", ctx.missing)
 
     if mats and intent == "study":
         for m in mats[:2]:
@@ -540,6 +584,8 @@ SYSTEM = (
     "9) confidence describes how well the evidence supports your answer: if you conclude the evidence is insufficient or you need clarification, confidence MUST be low and needs_clarification true when a clarification would help. "
     "10) When a SOURCE evidence item (kind 'source', the learner's own line-numbered code) is present, analyse the ACTUAL code against the problem statement, its stated constraints and the public examples: point at specific lines (e.g. 'line 4 of [F1]'), and explain the most likely cause as a HYPOTHESIS unless the judge evidence states it. Always state what cannot be known, in particular that the judge does not reveal which hidden test failed. "
     "11) During a live contest give conceptual debugging guidance and hints only: never write corrected code, replacement snippets or a step-by-step algorithm that solves the problem (quoting a short fragment of the learner's own line to point at it is fine). "
+    "12) Evidence of kind graph, judge-history, submission-history and resolution comes from a knowledge graph projected from the platform database: relationships and recorded versions are observations; any conclusion drawn from them (a shared gap, a probable cause, a likely mix-up between similar problems) is a hypothesis. "
+    "When evidence conflicts (identical source with different verdicts under different judge versions, a problem revised after a submission, a note superseded by a newer one) state the conflict with its timestamps and versions, never choose which verdict is right, and prefer the newer material over the deprecated one. "
     "Cite evidence ids like [S1] in the answer. Keep the answer concise."
 )
 
@@ -568,7 +614,7 @@ def build_payload(ctx: Ctx) -> dict:
         "mode": ctx.mode,
         "policy": ctx.policy,
         "known_gaps": ctx.missing,
-        "authorized_evidence": [{"id": e.id, "kind": e.kind, "title": e.title, "text": e.text, "updated": e.updated, "stale": e.stale} for e in ctx.evidence],
+        "authorized_evidence": [{"id": e.id, "kind": e.kind, "title": e.title, "text": e.text, "updated": e.updated, "stale": e.stale, **({"found_by": e.via} if e.via else {})} for e in ctx.evidence],
     }
 
 

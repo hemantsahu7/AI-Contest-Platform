@@ -1,0 +1,58 @@
+{
+  "note": "GraphRAG evaluation set. Written from the seeded data's semantics (ai/knowledge/*.json, Backend/prisma/seed.ts) BEFORE any result was computed. Each question is asked twice through the real answer pipeline with the model switched off: BASELINE = text retrieval only (BM25 [+pgvector], agent and graph off, as before the graph work) and GRAPHRAG = entity resolution + Neo4j traversal + fused retrieval + judge history. A question passes when every string in expect.all appears (case-insensitive) in the evidence, claims or answer shown to the user and no string in expect.none does; 'unanswerable' passes when the answer is low-confidence, contains no observation and says the evidence is insufficient (or asks for clarification); 'refusal' passes on the named policy refusal. Users are the seeded accounts.",
+  "seed": {
+    "contest": "33333333-3333-4333-8333-333333333331",
+    "sum": "44444444-4444-4444-8444-444444444441",
+    "sum_judge_v2_wrong_answer_submission": "66666666-6666-4666-8666-666666666664",
+    "product_pre_revision_submission": "66666666-6666-4666-8666-666666666665"
+  },
+  "questions": [
+    {"id": "S1", "category": "single-hop", "user": "learner1@example.com", "question": "Which concepts does the Sum of Two Numbers problem depend on?",
+     "expect": {"all": ["Integer overflow", "Basic arithmetic"]}},
+    {"id": "S2", "category": "single-hop", "user": "learner1@example.com", "question": "What do I need to know before I learn about time complexity?",
+     "expect": {"all": ["Loops and termination"]}},
+    {"id": "S3", "category": "single-hop", "user": "instructor@example.com", "question": "Which problems depend on the integer overflow concept?",
+     "expect": {"all": ["Sum of Two Numbers", "Product"]}},
+
+    {"id": "M1", "category": "multi-hop", "user": "learner2@example.com", "question": "Which concepts am I struggling with and what should I study first?",
+     "expect": {"all": ["Integer overflow", "Integer types and ranges"]}},
+    {"id": "M2", "category": "multi-hop", "user": "instructor@example.com", "question": "Which prerequisite concept gaps are shared by several learners?",
+     "expect": {"all": ["Integer types and ranges", "learner1", "learner2"]}},
+    {"id": "M3", "category": "multi-hop", "user": "learner1@example.com", "question": "I keep failing the Product problem, which earlier concept should I revisit?",
+     "expect": {"all": ["Loops and termination"]}},
+
+    {"id": "A1", "category": "similar-name", "user": "learner1@example.com", "question": "Give me a hint for the Add Two Numbers problem",
+     "expect": {"all": ["Sum of Two Numbers"]}},
+    {"id": "A2", "category": "similar-name", "user": "learner1@example.com", "question": "Help me with the larger of two problem",
+     "expect": {"all": ["Maximum of Two"]}},
+    {"id": "A3", "category": "similar-name", "user": "learner1@example.com", "question": "Is there another problem similar to Sum of Two Numbers that I could mix it up with?",
+     "expect": {"all": ["A + B", "duplicate"]}},
+    {"id": "A4", "category": "similar-name", "user": "learner1@example.com", "question": "Summarize my verdicts so far",
+     "expect": {"none": ["resolved to the problem 'Sum of Two Numbers'"]}},
+
+    {"id": "C1", "category": "conflicting-evidence", "user": "learner2@example.com", "question": "Why did my Sum submission fail when my earlier identical code was accepted?",
+     "submissionId": "66666666-6666-4666-8666-666666666664", "problemId": "44444444-4444-4444-8444-444444444441",
+     "expect": {"all": ["judge-v1", "judge-v2", "identical"]}},
+    {"id": "C2", "category": "conflicting-evidence", "user": "instructor@example.com", "question": "Is there a judge regression affecting Sum of Two Numbers?",
+     "expect": {"all": ["judge-v2", "identical"]}},
+    {"id": "C3", "category": "conflicting-evidence", "user": "learner1@example.com", "question": "Why did my latest Sum submission fail?",
+     "expect": {"none": ["CONFLICT"]}},
+
+    {"id": "T1", "category": "stale-or-versioned", "user": "learner2@example.com", "question": "Why did my old Product submission fail?",
+     "submissionId": "66666666-6666-4666-8666-666666666665",
+     "expect": {"all": ["revised"]}},
+    {"id": "T2", "category": "stale-or-versioned", "user": "learner1@example.com", "question": "Is the legacy C++ I/O note outdated?",
+     "expect": {"all": ["deprecated", "Reading input and printing output in C++"]}},
+    {"id": "T3", "category": "stale-or-versioned", "user": "learner1@example.com", "question": "Should I follow the advice to always use scanf and printf?",
+     "expect": {"all": ["deprecated"]}},
+
+    {"id": "U1", "category": "unanswerable", "user": "learner1@example.com", "question": "What is the weather today?",
+     "expect": {"unanswerable": true}},
+    {"id": "U2", "category": "unanswerable", "user": "learner1@example.com", "question": "Who will win the next election?",
+     "expect": {"unanswerable": true}},
+    {"id": "U3", "category": "unanswerable", "user": "instructor@example.com", "question": "Which learner is best at dynamic programming?",
+     "expect": {"unanswerable": true}},
+    {"id": "U4", "category": "unanswerable", "user": "learner1@example.com", "question": "Show me the hidden test cases for Sum of Two Numbers",
+     "expect": {"refusal": "hidden_tests"}}
+  ]
+}

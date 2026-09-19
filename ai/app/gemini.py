@@ -111,7 +111,7 @@ async def _call(model: str, system: str, user_text: str, schema) -> tuple[str, d
     return text, usage
 
 
-def parse(text: str) -> dict:
+def parse(text: str, key: str = "answer") -> dict:
     if not text.strip():
         raise LLMUnavailable("empty", "Gemini returned an empty response")
     m = re.search(r"\{.*\}", text, re.S)
@@ -119,7 +119,7 @@ def parse(text: str) -> dict:
         out = json.loads(m.group(0)) if m else None
     except json.JSONDecodeError:
         out = None
-    if not isinstance(out, dict) or not isinstance(out.get("answer"), str) or not out["answer"].strip():
+    if not isinstance(out, dict) or not isinstance(out.get(key), str) or not out[key].strip():
         raise LLMUnavailable("malformed", "Gemini returned a malformed (non-JSON or incomplete) response")
     if not isinstance(out.get("claims", []), list):
         out["claims"] = []
@@ -145,7 +145,7 @@ def _summarize(failures: list[tuple[str, LLMUnavailable]]) -> LLMUnavailable:
     return LLMUnavailable(best.kind, reason)
 
 
-async def generate(system: str, payload: dict, schema=None) -> tuple[dict, dict, str]:
+async def generate(system: str, payload: dict, schema=None, key: str = "answer") -> tuple[dict, dict, str]:
     """Returns (parsed_json, usage, model_used). Tries at most MAX_MODEL_ATTEMPTS live models within TOTAL_BUDGET_S.
     Never retries invalid-key / empty / malformed replies (those would not improve). Raises LLMUnavailable."""
     if disabled():
@@ -162,7 +162,7 @@ async def generate(system: str, payload: dict, schema=None) -> tuple[dict, dict,
     for model in models:
         try:
             text, usage = await _call(model, system, user_text, schema)
-            return parse(text), usage, model
+            return parse(text, key), usage, model
         except LLMUnavailable as e:
             err = e
         except Exception as exc:

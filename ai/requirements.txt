@@ -5,3 +5,4 @@ google-genai==2.24.0
 pydantic==2.13.5
 pytest==8.3.4
 psycopg[binary]==3.2.9
+neo4j==5.28.6
