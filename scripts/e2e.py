@@ -17,6 +17,8 @@ check("hidden tests are not returned to learners", all(not t["isHidden"] for p i
 s, iprobs = call("GET", f"{API}/contests/{CONTEST}/problems", ins)
 check("instructor can see hidden tests (role check)", any(t["isHidden"] for p in iprobs for t in p["testCases"]))
 
+_s, _rows = call("GET", f"{API}/contests/{CONTEST}/leaderboard", l1)
+score_before = next(r["score"] for r in _rows if r["username"] == "learner1")  # relative check: independent of what was solved before this run
 sub, seen = submit_and_wait(l1, SUM, AC)
 check("correct C++ -> ACCEPTED (real docker)", sub["verdict"] == "ACCEPTED" and sub["score"] == 100, sub["verdict"])
 check("async lifecycle observed", seen[0] == "QUEUED" and seen[-1] == "COMPLETED", str(seen))
@@ -36,7 +38,7 @@ l2_wa = sub["id"]
 
 s, rows = call("GET", f"{API}/contests/{CONTEST}/leaderboard", l1)
 me = next(r for r in rows if r["username"] == "learner1")
-check("leaderboard: seeded accept counted once, new accept on same problem not double-counted", s == 200 and me["score"] == 200, str(me))
+check("leaderboard: an accept on an already-solved problem and non-accepted attempts do not change the score (no double counting)", s == 200 and me["score"] == score_before, f"before={score_before} after={me['score']}")
 
 print("== Security ==")
 s, _ = call("GET", f"{API}/contests")
