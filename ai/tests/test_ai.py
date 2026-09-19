@@ -110,3 +110,10 @@ def test_grounding_downgrades_uncited_observation_and_strips_code_when_live():
 def test_guard_does_not_match_this_as_his():
     r = ask("Why did this submission fail?", submission_id="s2")
     assert r.get("refusal") is None and any("not accessible" in m for m in r["missing"])
+
+
+def test_int_main_alone_is_not_flagged_as_overflow_risk():
+    notes = assistant._static_checks("#include <iostream>\nint main(){long long a; std::cin>>a; std::cout<<a;}", {"testCases": []})
+    assert not any("overflow" in n for n in notes)
+    assert not any("overflow" in n for n in assistant._static_checks("int main(){while(true){}}", {"testCases": []}))
+    assert any("overflow" in n for n in assistant._static_checks("int main(){int a,b;std::cin>>a>>b;}", {"testCases": []}))

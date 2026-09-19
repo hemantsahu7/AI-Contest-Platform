@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from . import gemini
+from . import gemini, graph, vectors
 from .backend import Backend, NotAccessible
 from .retrieval import MaterialIndex, load_materials, resolve_problem
 
@@ -82,6 +82,9 @@ class Ctx:
     evidence: list[Ev] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
     refusal: str | None = None
+    retrieval: str = "n/a"
+    progress: list[dict] = field(default_factory=list)
+    shared: list[dict] = field(default_factory=list)
 
 
 # ---------- guards ----------
@@ -126,7 +129,7 @@ def _latest(subs: list[dict]) -> dict | None:
 def _static_checks(source: str, problem: dict) -> list[str]:
     """Cheap observations about the learner's OWN source. They are hypotheses, never verdicts."""
     notes = []
-    if re.search(r"\bint\b", source) and not re.search(r"long long|int64_t|__int128", source):
+    if re.search(r"\bint\b(?!\s+main\b)", source) and not re.search(r"long long|int64_t|__int128", source):
         notes.append("Source declares 32-bit `int` and no 64-bit type; large inputs could overflow (hypothesis - the input limits are not visible to me).")
     if not re.search(r"cin|scanf|getline|fgets|read\(", source):
         notes.append("Source contains no obvious input reading (cin/scanf); the program may ignore its input.")
@@ -217,6 +220,8 @@ async def gather(question: str, contest_id: str, problem_id: str | None, submiss
                     ctx.evidence.append(Ev(f"H{i}", "static-check", "Static check of your own code", note, f"GET /submissions/{target['id']}#sourceCode"))
         elif not mine:
             ctx.missing.append("You have no submissions in this contest yet, so there is nothing to explain.")
+        elif not ctx.problem and not ctx.candidates and intent_of(question) in ("progress", "study"):
+            await add_progress_evidence(ctx, mine, contest, staff=False)
         else:
             ctx.missing.append("No submission of yours matches the problem in your question.")
     else:
@@ -229,22 +234,108 @@ async def gather(question: str, contest_id: str, problem_id: str | None, submiss
         scope = f"problem '{ctx.problem['title']}'" if ctx.problem else "all problems"
         ctx.evidence.append(Ev("A1", "aggregate", f"Verdict distribution for {scope}", f"{len(rows)} submissions. {summary}. Judge/infrastructure errors: {len(infra)} (ids {[s['id'][:8] for s in infra]}); infrastructure errors are excluded from student-mistake counts.", f"GET /contests/{contest_id}/submissions"))
         ctx.missing.append("Judge version history and per-test results are not exposed to this assistant, so a judge change cannot be confirmed or ruled out from verdict counts alone.")
+        if not ctx.problem and not ctx.candidates and intent_of(question) in ("progress", "study"):
+            await add_progress_evidence(ctx, subs, contest, staff=True)
 
+    if ctx.progress or ctx.shared:
+        return ctx
     boost = []
     if ctx.problem:
         boost = ctx.problem["title"].split() + ctx.problem["description"].split()
     verdict = ctx.submission["verdict"] if ctx.submission else ""
     query = f"{question} {VERDICT_TOPIC.get(verdict, '')} {' '.join(b for b in boost[:12])}"
-    for i, (m, score) in enumerate(INDEX.search(query, top_k=3), 1):
+    hits, ctx.retrieval = await hybrid_search(query, boost)
+    for i, (m, score) in enumerate(hits, 1):
         note = f" (DEPRECATED - superseded by {m.superseded_by}; may be outdated)" if m.status == "deprecated" else ""
         ctx.evidence.append(Ev(f"M{i}", "material", m.title + note, m.body, f"materials/{m.id}.md", m.updated, m.status == "deprecated"))
     return ctx
+
+
+async def add_progress_evidence(ctx: Ctx, subs: list[dict], contest: dict, staff: bool) -> None:
+    """Multi-hop: user -> submissions -> problems (+verdict history) -> learning material, via graph.py.
+    For staff it also groups learners by the material their failures point to (candidate shared gap)."""
+    g = graph.build(subs, contest["id"], contest["title"])
+    probs = {f"problem:{p['id']}": p for p in ctx.problems}
+    users = sorted({s for s, r, _ in g.edges if r == "SUBMITTED"})
+    cache: dict = {}
+    mat_ev: dict[str, str] = {}
+    concept: dict[str, list[str]] = {}
+    n = 0
+
+    def material_evidence(m) -> str:
+        if m.id not in mat_ev:
+            mat_ev[m.id] = f"M{len(mat_ev) + 1}"
+            ctx.evidence.append(Ev(mat_ev[m.id], "material", m.title, m.body, f"materials/{m.id}.md", m.updated, False))
+        return mat_ev[m.id]
+
+    for user in users:
+        for prob, attempts in list(graph.struggled(graph.problem_history(g, user), staff).items())[: (6 if staff else 3)]:
+            p = probs.get(prob)
+            if not p:
+                continue
+            failing = sorted({v for _, v in attempts if v in graph.FAILING})
+            key = (prob, tuple(failing))
+            if key not in cache:
+                q = f"{p['title']} {p['description']} " + " ".join(VERDICT_TOPIC.get(v, "") for v in failing)
+                hits, ctx.retrieval = await hybrid_search(q, p["title"].split())
+                cache[key] = [m for m, _ in hits if m.status != "deprecated"][:2]
+            mats = cache[key]
+            for m in mats:
+                g.add(prob, "RELATED_TO", f"material:{m.id}", None, m.title)
+            n += 1
+            label = g.labels.get(user, user)
+            ids = [material_evidence(m) for m in mats]
+            ctx.evidence.append(Ev(f"G{n}", "graph-path", f"Relationship path {n}", graph.render_path(g, user, prob, attempts, [m.title for m in mats]), f"derived from GET /contests/{contest['id']}/submissions"))
+            hints = []
+            if not staff:
+                latest_fail = [sub for sub, v in attempts if v in graph.FAILING][-1]
+                src = g.props.get(latest_fail, {}).get("source")
+                hints = _static_checks(src, p) if src else []
+            ctx.progress.append({"g": f"G{n}", "user": label, "problem": p["title"], "verdicts": [v for _, v in attempts], "mats": ids, "titles": [m.title for m in mats], "hints": hints})
+            for m in mats:
+                concept.setdefault(m.id, []).append(f"{label} ({p['title']})")
+    if staff:
+        k = 0
+        for mid, who in concept.items():
+            if len({w.split(" (")[0] for w in who}) >= 2:
+                k += 1
+                title = next(m.title for ms in cache.values() for m in ms if m.id == mid)
+                ctx.evidence.append(Ev(f"K{k}", "graph-path", f"Shared concept candidate {k}", f"Failures by {', '.join(sorted(set(who)))} all point to '{title}' via problem -RELATED_TO-> material edges.", "derived from submissions + materials", None))
+                ctx.shared.append({"k": f"K{k}", "title": title, "who": sorted(set(who)), "mat": mat_ev.get(mid)})
+    if not ctx.progress:
+        ctx.missing.append("No struggling problems were found in the available submission history.")
+    ctx.missing.append("Relationships are derived per request from submissions and learning material (in-memory traversal, not a stored knowledge graph).")
+
+
+async def hybrid_search(query: str, boost_tags: list[str] | None = None, top_k: int = 3):
+    """BM25 (+ freshness/tag rerank) fused with pgvector similarity via reciprocal-rank fusion.
+    Degrades to BM25 alone, and says why, when the vector side is unavailable."""
+    bm = INDEX.search(query, top_k=8, boost_tags=boost_tags)
+    if not vectors.enabled():
+        return bm[:top_k], "bm25 (vector store not configured)"
+    if not gemini.configured():
+        return bm[:top_k], "bm25 (vector unavailable: no GEMINI_API_KEY for embeddings)"
+    try:
+        await vectors.ensure_indexed(INDEX.docs)
+        qv = (await gemini.embed([query], "RETRIEVAL_QUERY", vectors.DIMS))[0]
+        vec = await vectors.vector_search(qv, 6)
+    except gemini.LLMUnavailable as e:
+        return bm[:top_k], f"bm25 (vector unavailable: {e.kind})"
+    except Exception as e:
+        log.warning("vector retrieval failed: %s", type(e).__name__)
+        return bm[:top_k], f"bm25 (vector unavailable: {type(e).__name__})"
+    by_id = {d.id: d for d in INDEX.docs}
+    fused = vectors.rrf([[m.id for m, _ in bm], [i for i, _ in vec if i in by_id]])
+    ranked = sorted(fused.items(), key=lambda kv: kv[1] * (0.4 if by_id[kv[0]].status == "deprecated" else 1.0), reverse=True)
+    return [(by_id[i], round(sc, 4)) for i, sc in ranked[:top_k]], "hybrid (bm25 + pgvector, RRF, freshness rerank)"
 
 
 # ---------- deterministic fallback ----------
 
 def intent_of(q: str) -> str:
     ql = q.lower()
+    if re.search(r"struggl|my progress|which problems|what problems|weak(ness|est)|across (my|all)|study plan|overall|prerequisite gap|share[sd]? .{0,20}gap", ql):
+        return "progress"
     if re.search(r"hint|stuck|approach|idea|nudge|how (do|to|can i) (i )?solve", ql):
         return "hint"
     if re.search(r"why|fail|wrong|verdict|rejected|not accepted|error|tle|time limit|compil|latest submission|my submission|my code", ql):
@@ -276,13 +367,28 @@ def fallback_answer(ctx: Ctx) -> dict:
         if "A1" in ev:
             claim(ev["A1"].text, "observation", ["A1"])
             claim("Hypothesis: a large share of non-infrastructure failures with the same verdict on one problem may point to a shared misconception or an unclear problem statement; the verdict counts alone cannot separate these.", "hypothesis", ["A1"])
-            if mats:
+            for pr in ctx.progress:
+                claim(f"{pr['user']} on '{pr['problem']}': verdicts oldest to newest {' -> '.join(pr['verdicts'])}.", "observation", [pr["g"]])
+            if ctx.progress and not ctx.shared:
+                claim("No concept is shared by two or more learners' failed problems in the available history, so a shared prerequisite gap is not supported.", "hypothesis", [ctx.progress[0]["g"]])
+            for sh in ctx.shared:
+                claim(f"Candidate shared prerequisite gap - '{sh['title']}': {', '.join(sh['who'])} failed problems linked to it. This is a hypothesis; the verdicts alone do not prove a shared misconception.", "hypothesis", [sh["k"], sh["mat"]])
+            if mats and not ctx.shared:
                 claim(f"Related concept to check: {mats[0].title}.", "hypothesis", [mats[0].id])
             return _dict("\n".join(lines), claims, "low" if ctx.missing else "medium", ctx.missing)
         return _dict("I could not find contest evidence for this question.", [], "low", ctx.missing)
 
     if ctx.candidates and not ctx.problem:
         return _dict("Your question matches more than one problem (" + ", ".join(c["title"] for c in ctx.candidates) + "). Which one do you mean?", [], "low", ctx.missing, True)
+
+    if ctx.progress:
+        for pr in ctx.progress:
+            claim(f"'{pr['problem']}': verdicts from oldest to newest were {' -> '.join(pr['verdicts'])}.", "observation", [pr["g"]])
+            for h in pr["hints"]:
+                claim("Possible pattern in your latest failing attempt: " + h, "hypothesis", [pr["g"]])
+            if pr["titles"]:
+                claim(f"Study next: {', '.join(pr['titles'])}.", "hypothesis", [pr["g"]] + pr["mats"])
+        return _dict("\n".join(lines), claims, "medium", ctx.missing)
 
     sub = ctx.submission
     if intent == "verdict":

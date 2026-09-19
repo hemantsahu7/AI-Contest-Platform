@@ -1,5 +1,7 @@
 # Shodh-a-Code Contest Platform (Stage 1 Backend)
 
+> **Note:** this file documents the Stage 1 backend as originally written. The full system (frontend, Gemini AI service, pgvector, scripts) is documented in the top-level `../README.md`, which takes precedence where they differ.
+
 Backend-only take-home implementation of a small LeetCode/Codeforces-style contest platform.
 
 This is **Stage 1**. It does **not** include a React frontend, LLM/agents, RAG/GraphRAG, Neo4j, or pgvector. Verdicts and scores are produced only by a deterministic Docker C++ judge. AI never decides correctness.

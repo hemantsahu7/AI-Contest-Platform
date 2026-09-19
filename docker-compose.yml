@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: shodh
       POSTGRES_PASSWORD: shodh
@@ -68,6 +68,8 @@ services:
       - "8000:8000"
     environment:
       BACKEND_URL: http://backend:3000
+      # Own table only (ai_material_embeddings); public learning material embeddings, no user data.
+      DATABASE_URL: postgresql://shodh:shodh@postgres:5432/shodh
       # Gemini key stays server-side (this container only). Without it the assistant runs evidence-only.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
@@ -76,7 +78,10 @@ services:
       AI_TIMEOUT_S: ${AI_TIMEOUT_S:-20}
       AI_RATE_LIMIT_PER_HOUR: ${AI_RATE_LIMIT_PER_HOUR:-60}
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+      postgres:
+        condition: service_healthy
 
   frontend:
     build:

@@ -76,9 +76,9 @@ async def ask(req: AskRequest, authorization: str | None = Header(default=None))
         await be.close()
     total_ms = int((time.perf_counter() - t0) * 1000)
     log.info(
-        "req=%s user=%s mode=%s contest=%s problem=%s source=%s confidence=%s refusal=%s evidence=%s gather_ms=%d answer_ms=%d total_ms=%d",
+        "req=%s user=%s mode=%s contest=%s problem=%s source=%s confidence=%s refusal=%s retrieval=%r evidence=%s gather_ms=%d answer_ms=%d total_ms=%d",
         request_id, me["username"], ctx.mode, req.contestId, ctx.problem["id"] if ctx.problem else None,
-        result["source"], result["confidence"], result.get("refusal"),
+        result["source"], result["confidence"], result.get("refusal"), ctx.retrieval,
         [e["id"] for e in result["evidence"]], int((t_answer - t_gather) * 1000), int((time.perf_counter() - t_answer) * 1000), total_ms,
     )
-    return {**result, "requestId": request_id, "mode": ctx.mode, "policy": ctx.policy, "timingMs": total_ms}
+    return {**result, **({"retrieval": ctx.retrieval} if not ctx.refusal else {}), "requestId": request_id, "mode": ctx.mode, "policy": ctx.policy, "timingMs": total_ms}
